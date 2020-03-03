@@ -9,8 +9,8 @@ import pandas as pd
 import time
 
 import forced_phot
-    
-# read in a selavy catalog with pandas 
+
+# read in a selavy catalog with pandas
 df=pd.read_fwf('selavy-image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.islands.txt',skiprows=[1,])
 
 # and convert to astropy Table for easier handling
@@ -27,9 +27,13 @@ noise='noiseMap.image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits'
 FP=forced_phot.ForcedPhot(image, background, noise)
 
 # run the forced photometry
-flux_islands,flux_err_islands,chisq_islands,DOF_islands=FP.measure(P_islands,
-                                                                   data_islands['maj_axis']*u.arcsec, data_islands['min_axis']*u.arcsec, data_islands['pos_ang']*u.deg,
-                                                                   cluster_threshold=3)
+flux_islands, flux_err_islands, chisq_islands, DOF_islands = FP.measure(
+    P_islands,
+    data_islands['maj_axis']*u.arcsec,
+    data_islands['min_axis']*u.arcsec,
+    data_islands['pos_ang']*u.deg,
+    cluster_threshold=3
+)
 """
 
 from itertools import chain
@@ -39,12 +43,14 @@ import astropy.nddata
 import astropy.wcs
 import numpy as np
 import scipy.spatial
-from astropy import constants as c
 from astropy import units as u
-from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.modeling import fitting, models
 from astropy.wcs import WCS
+
+
+class ArgumentError(Exception):
+    pass
 
 
 class G2D:
@@ -72,12 +78,12 @@ class G2D:
     def __init__(self, x0, y0, fwhm_x, fwhm_y, PA):
         """
         2D Gaussian for use as a kernel
-        
+
         create the kernel:
         g=G2D(x0, y0, fwhm_x, fwhm_y, PA)
         and return the kernel:
         g(x,y)
-        
+
         :param x0: the mean x coordinate (pixels)
         :type x0: float
         :param y0: the mean y coordinate (pixels)
@@ -87,7 +93,7 @@ class G2D:
         :param fwhm_y: the FWHM in the y coordinate (pixels)
         :type fwhm_y: float
         :param PA: the PA of the Gaussian (E of N); Quantity or radians
-        :type PA: `astropy.units.Quantity` | float        
+        :type PA: `astropy.units.Quantity` | float
         """
         self.x0 = x0
         self.y0 = y0
@@ -135,7 +141,7 @@ class ForcedPhot:
     """
     FP=ForcedPhot(image, background, noise)
     create a ForcedPhotometry object for processing an ASKAPSoft image
-    
+
     :param image: name of the primary image or FITS handle
     :type image: str | list
     :param background: name of the background image or FITS handle
@@ -153,19 +159,20 @@ class ForcedPhot:
         then use it:
         flux_islands,flux_err_islands,chisq_islands,DOF_islands=FP.measure(P_islands)
         where P is an array SkyCoord objects
-        
+
         :param image: name of the primary image or FITS handle
         :type image: str | list
         :param background: name of the background image or FITS handle
         :type background: str | list
         :param noise: name of the noise map image or FITS handle
         :type noise: str | list
-        :param verbose: whether to be verbose in output (eventually replace with logging), defaults to False
+        :param verbose: whether to be verbose in output (eventually replace with logging),
+            defaults to False
         :type verbose: bool, optional
 
         """
 
-        self.verbose=verbose
+        self.verbose = verbose
 
         if isinstance(image, str):
             try:
@@ -207,9 +214,9 @@ class ForcedPhot:
         ):
             print("Image header does not have BMAJ, BMIN, BPA keywords")
 
-        self.BMAJ=self.fi[0].header['BMAJ'] * u.deg
-        self.BMIN=self.fi[0].header['BMIN'] * u.deg
-        self.BPA=self.fi[0].header['BPA'] * u.deg
+        self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
+        self.BMIN = self.fi[0].header["BMIN"] * u.deg
+        self.BPA = self.fi[0].header["BPA"] * u.deg
 
         self.data = self.fi[0].data - self.fb[0].data
         self.bgdata = self.fb[0].data
@@ -240,7 +247,8 @@ class ForcedPhot:
         :type X0: `np.ndarray`
         :param Y0: array of Y coordinates of sources
         :type Y0: `np.ndarray`
-        :param threshold: multiple of BMAJ for finding clusters.  Set to 0 or None to disable, defaults to 1.5
+        :param threshold: multiple of BMAJ for finding clusters.  Set to 0 or None to disable,
+            defaults to 1.5
         :type threshold: float | NoneType
 
         """
@@ -249,10 +257,7 @@ class ForcedPhot:
             self.in_cluster = []
             return
 
-        threshold_pixels = (
-            threshold
-            * (self.BMAJ / self.pixelscale).decompose().value
-        )
+        threshold_pixels = threshold * (self.BMAJ / self.pixelscale).decompose().value
         t = scipy.spatial.KDTree(np.c_[X0, Y0])
 
         # this is somewhat convoluted
@@ -300,21 +305,29 @@ class ForcedPhot:
 
         :param positions: array of coordinates for sources to measure
         :type positions: `astropy.coordinates.sky_coordinate.SkyCoord`
-        :param major_axes: FWHMs along major axes of sources to measure, None will use header BMAJ, defaults to None
+        :param major_axes: FWHMs along major axes of sources to measure, None will use header BMAJ,
+            defaults to None
         :type major_axes: `numpy.ndarray` | float | NoneType, optional
-        :param minor_axes: FWHMs along minor axes of sources to measure, None will use header BMIN, defaults to None
+        :param minor_axes: FWHMs along minor axes of sources to measure, None will use header BMIN,
+            defaults to None
         :type minor_axes: `numpy.ndarray` | float | NoneType, optional
-        :param position_angles: position angles of sources to measure, None will use header BPA, defaults to None
+        :param position_angles: position angles of sources to measure, None will use header BPA,
+            defaults to None
         :type position_angles: `astropy.units.Quantity` | Nonetype, optional
-        :param nbeam: Diameter of the square cutout for fitting in units of the major axis, defaults to 1.5
+        :param nbeam: Diameter of the square cutout for fitting in units of the major axis,
+            defaults to 1.5
         :type nbeam: float, optional
-        :param cluster_threshold: multiple of BMAJ to use for identifying clusters, set to 0 or None to disable, defaults to 3
+        :param cluster_threshold: multiple of BMAJ to use for identifying clusters, set to 0
+            or None to disable, defaults to 3
         :type cluster_threhsold: float | NoneType, optional
-        :param stamps: whether or not to also return a postage stamp (can only be used on a single source), defaults to False
+        :param stamps: whether or not to also return a postage stamp (can only be used on a
+            single source), defaults to False
         :type stamps: bool, optional
 
-        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model if stamps=True
-        :rtype: `numpy.ndarray`|float, `numpy.ndarray`|float, `numpy.ndarray`|float, `numpy.ndarray`|float, optionally `np.ndarray`,`np.ndarray`        
+        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
+            if stamps=True
+        :rtype: `numpy.ndarray`|float, `numpy.ndarray`|float, `numpy.ndarray`|float,
+            `numpy.ndarray`|float, optionally `np.ndarray`,`np.ndarray`
         """
 
         X0, Y0 = map(
@@ -441,7 +454,8 @@ class ForcedPhot:
         :type flux: `numpy.ndarray` | float
         :param positions: position(s) of source(s) to inject
         :type positions: `astropy.coordinates.sky_coordinate.SkyCoord`
-        :param nbeam: Diameter of the square cutout for injection in units of the major axis, defaults to 3
+        :param nbeam: Diameter of the square cutout for injection in units of the major
+            axis, defaults to 3
         :type nbeam: float, optional
         """
 
@@ -484,9 +498,10 @@ class ForcedPhot:
 
         or
 
-        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False)        
+        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
+            pa, stamps=False)
 
-        forced photometry for a single source 
+        forced photometry for a single source
         if stamps is True, will also output data and kernel postage stamps
 
         :param X0: x coordinate of source to measure
@@ -507,12 +522,13 @@ class ForcedPhot:
         :type b: `astropy.units.Quantity`
         :param pa: position angle in angular units
         :type pa: `astropy.units.Quantity`
-        :param stamps: whether or not to return postage stamps of the data and model for a single source, defaults to False
+        :param stamps: whether or not to return postage stamps of the data and model for
+            a single source, defaults to False
         :type stamps: bool, optional
 
-        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model if stamps=True
-        :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`        
-
+        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
+            if stamps=True
+        :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`
         """
         sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
         # unfortunately we have to make a custom kernel for each object
@@ -597,12 +613,13 @@ class ForcedPhot:
         fitter=fitting.LevMarLSQFitter(),
     ):
         """
-        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False, fitter = fitting.LevMarLSQFitter())
+        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False,
+            fitter = fitting.LevMarLSQFitter())
         or
-        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False, fitter = fitting.LevMarLSQFitter())
+        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
+            pa, stamps=False, fitter = fitting.LevMarLSQFitter())
 
         forced photometry for a cluster of sources using astropy fitting
-        
 
         :param X0: x coordinates of source to measure
         :type X0: `numpy.ndarray`
@@ -622,13 +639,16 @@ class ForcedPhot:
         :type b: `astropy.units.Quantity`
         :param pa: position angle of each source in angular units
         :type pa: `astropy.units.Quantity`
-        :param stamps: whether or not to return postage stamps of the data and model, defaults to False
+        :param stamps: whether or not to return postage stamps of the data and model,
+            defaults to False
         :type stamps: bool, optional
         :param fitter: fitting object, defaults to `fitting.LevMarLSQFitter()`
         :type fitter: optional
 
-        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model if stamps=True
-        :rtype: numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, optionally `np.ndarray`,`np.ndarray`        
+        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
+            if stamps=True
+        :rtype: numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, optionally
+            `np.ndarray`,`np.ndarray`
 
         """
         x0 = X0.mean()
@@ -703,9 +723,13 @@ class ForcedPhot:
         self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
     ):
         """
-        flux,flux_err,chisq,DOF=_measure_astropy(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False)
+        flux, flux_err, chisq, DOF = _measure_astropy(
+            X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
+        )
         or
-        flux,flux_err,chisq,DOF,data,model=_measure_astropy(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False)
+        flux, flux_err, chisq, DOF, data,model = _measure_astropy(
+            X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
+        )
 
 
         forced photometry for a single source using our astropy version
