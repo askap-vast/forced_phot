@@ -79,21 +79,21 @@ class G2D:
         self.fwhm_y = fwhm_y
         # adjust the PA to agree with the selavy convention
         # E of N
-        self.PA = pa - 90 * u.deg
+        self.pa = pa - 90 * u.deg
         self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
         self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
 
         self.a = (
-            np.cos(self.PA) ** 2 / 2 / self.sigma_x ** 2
-            + np.sin(self.PA) ** 2 / 2 / self.sigma_y ** 2
+            np.cos(self.pa) ** 2 / 2 / self.sigma_x ** 2
+            + np.sin(self.pa) ** 2 / 2 / self.sigma_y ** 2
         )
         self.b = (
-            np.sin(2 * self.PA) / 2 / self.sigma_x ** 2
-            - np.sin(2 * self.PA) / 2 / self.sigma_y ** 2
+            np.sin(2 * self.pa) / 2 / self.sigma_x ** 2
+            - np.sin(2 * self.pa) / 2 / self.sigma_y ** 2
         )
         self.c = (
-            np.sin(self.PA) ** 2 / 2 / self.sigma_x ** 2
-            + np.cos(self.PA) ** 2 / 2 / self.sigma_y ** 2
+            np.sin(self.pa) ** 2 / 2 / self.sigma_x ** 2
+            + np.cos(self.pa) ** 2 / 2 / self.sigma_y ** 2
         )
 
     def __call__(self, x: float, y: float) -> np.ndarray:
@@ -237,7 +237,8 @@ class ForcedPhot:
                 n = np.isin(indices, list(self.clusters.keys()))
                 if np.any(n):
                     j = indices[n][0]
-                    [self.clusters[j].add(k) for k in indices]
+                    for k in indices:
+                        self.clusters[j].add(k)
                 else:
                     self.clusters[i] = set(indices)
         self.in_cluster = sorted(list((chain.from_iterable([*self.clusters.values()]))))
@@ -349,7 +350,7 @@ class ForcedPhot:
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
         chisq = np.zeros(len(X0))
-        DOF = np.zeros(len(X0), dtype=np.int16)
+        dof = np.zeros(len(X0), dtype=np.int16)
 
         for i in range(len(X0)):
             if i in self.in_cluster:
@@ -368,38 +369,38 @@ class ForcedPhot:
             )
 
             if not stamps:
-                flux[i], flux_err[i], chisq[i], DOF[i] = out
+                flux[i], flux_err[i], chisq[i], dof[i] = out
 
         clusters = list(self.clusters.values())
         for j in range(len(clusters)):
-            i = np.array(list(clusters[j]))
+            ii = np.array(list(clusters[j]))
             if self.verbose:
                 print("Fitting a cluster of sources %s" % i)
-            xmin = max(int(round((X0[i] - npix[i]).min())), 0)
-            xmax = min(int(round((X0[i] + npix[i]).max())), self.data.shape[-1]) + 1
-            ymin = max(int(round((Y0[i] - npix[i]).min())), 0)
-            ymax = min(int(round((Y0[i] + npix[i]).max())), self.data.shape[-2]) + 1
+            xmin = max(int(round((X0[ii] - npix[ii]).min())), 0)
+            xmax = min(int(round((X0[ii] + npix[ii]).max())), self.data.shape[-1]) + 1
+            ymin = max(int(round((Y0[ii] - npix[ii]).min())), 0)
+            ymax = min(int(round((Y0[ii] + npix[ii]).max())), self.data.shape[-2]) + 1
 
             out = self._measure_cluster(
-                X0[i], Y0[i], xmin, xmax, ymin, ymax, a[i], b[i], pa[i], stamps=stamps
+                X0[ii], Y0[ii], xmin, xmax, ymin, ymax, a[ii], b[ii], pa[ii], stamps=stamps
             )
             f, f_err, csq, dof = out[:4]
-            for k in range(len(i)):
-                flux[i[k]] = f[k]
-                flux_err[i[k]] = f_err[k]
-                chisq[i[k]] = csq[k]
-                DOF[i[k]] = dof[k]
+            for k in range(len(ii)):
+                flux[ii[k]] = f[k]
+                flux_err[ii[k]] = f_err[k]
+                chisq[ii[k]] = csq[k]
+                dof[ii[k]] = dof[k]
 
         if positions.isscalar:
             if stamps:
-                return flux[0], flux_err[0], chisq[0], DOF[0], out[-2], out[-1]
+                return flux[0], flux_err[0], chisq[0], dof[0], out[-2], out[-1]
             else:
-                return flux[0], flux_err[0], chisq[0], DOF[0]
+                return flux[0], flux_err[0], chisq[0], dof[0]
         else:
             if stamps:
-                return flux, flux_err, chisq, DOF, out[-2], out[-1]
+                return flux, flux_err, chisq, dof, out[-2], out[-1]
             else:
-                return flux, flux_err, chisq, DOF
+                return flux, flux_err, chisq, dof
 
     def inject(
         self,
@@ -662,7 +663,7 @@ class ForcedPhot:
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
         chisq = np.zeros(len(X0)) + (((d - model) / n) ** 2).sum()
-        DOF = np.zeros(len(X0), dtype=np.int16) + np.prod(xx.shape) - len(X0)
+        dof = np.zeros(len(X0), dtype=np.int16) + np.prod(xx.shape) - len(X0)
         for k in range(len(X0)):
             flux[k] = out.__getattr__("amplitude_%d" % k).value
             # a weighted average would be better for the noise here, but
@@ -670,9 +671,9 @@ class ForcedPhot:
             flux_err[k] = self.noisedata[np.int16(round(Y0[k])), np.int16(round(Y0[k]))]
 
         if stamps:
-            return flux, flux_err, chisq, DOF, d, model
+            return flux, flux_err, chisq, dof, d, model
         else:
-            return flux, flux_err, chisq, DOF
+            return flux, flux_err, chisq, dof
 
     def _measure_astropy(
         self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
@@ -735,8 +736,8 @@ class ForcedPhot:
         flux = ((im.data - bg) * kernel / ns ** 2).sum() / (kernel ** 2 / ns ** 2).sum()
         flux_err = ((ns) * kernel / ns ** 2).sum() / (kernel ** 2 / ns ** 2).sum()
         chisq = (((im.data - flux * kernel) / ns.data) ** 2).sum()
-        DOF = np.prod(xx.shape) - 1
+        dof = np.prod(xx.shape) - 1
         if not stamps:
-            return flux, flux_err, chisq, DOF
+            return flux, flux_err, chisq, dof
         else:
-            return flux, flux_err, chisq, DOF, im.data, flux * kernel
+            return flux, flux_err, chisq, dof, im.data, flux * kernel
