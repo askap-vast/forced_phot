@@ -48,6 +48,7 @@ from astropy import units as u
 from astropy.io import fits
 from astropy.modeling import fitting, models
 from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_scales
 
 
 class ArgumentError(Exception):
@@ -184,19 +185,13 @@ class ForcedPhot:
         self.BMIN = self.fi[0].header["BMIN"] * u.deg
         self.BPA = self.fi[0].header["BPA"] * u.deg
 
-        self.data = self.fi[0].data - self.fb[0].data
-        self.bgdata = self.fb[0].data
-        self.noisedata = self.fn[0].data
-        if len(self.fi[0].data) == 2:
-            self.twod = True
-        else:
-            self.twod = False
-            self.data = self.data[0, 0]
-            self.bgdata = self.bgdata[0, 0]
-            self.noisedata = self.noisedata[0, 0]
+        self.data = (self.fi[0].data - self.fb[0].data).squeeze()
+        self.bgdata = self.fb[0].data.squeeze()
+        self.noisedata = self.fn[0].data.squeeze()
+        self.twod = True  # TODO remove
 
-        self.w = WCS(self.fi[0].header, naxis=2)
-        self.pixelscale = (self.w.wcs.cdelt[1] * u.deg).to(u.arcsec)
+        self.w = WCS(self.fi[0].header).celestial
+        self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
 
     def cluster(self, X0: np.ndarray, Y0: np.ndarray, threshold: Optional[float] = 1.5):
         """Identifies clusters among the given X, Y points that are within `threshold` * BMAJ
@@ -365,8 +360,7 @@ class ForcedPhot:
                 stamps=stamps,
             )
 
-            if not stamps:
-                flux[i], flux_err[i], chisq[i], dof[i] = out
+            flux[i], flux_err[i], chisq[i], dof[i], *_ = out
 
         clusters = list(self.clusters.values())
         for j in range(len(clusters)):
