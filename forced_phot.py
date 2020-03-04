@@ -37,6 +37,7 @@ flux_islands, flux_err_islands, chisq_islands, DOF_islands = FP.measure(
 """
 
 from itertools import chain
+from typing import Dict, List, Optional, Tuple, Union
 
 import astropy
 import astropy.nddata
@@ -54,54 +55,31 @@ class ArgumentError(Exception):
 
 
 class G2D:
-    """
-    2D Gaussian for use as a kernel
+    """2D Gaussian for use as a kernel.
 
-    create the kernel:
-    g=G2D(x0, y0, fwhm_x, fwhm_y, PA)
-    and return the kernel:
-    g(x,y)
-
-    :param x0: the mean x coordinate (pixels)
-    :type x0: float
-    :param y0: the mean y coordinate (pixels)
-    :type y0: float
-    :param fwhm_x: the FWHM in the x coordinate (pixels)
-    :type fwhm_x: float
-    :param fwhm_y: the FWHM in the y coordinate (pixels)
-    :type fwhm_y: float
-    :param PA: the PA of the Gaussian (E of N); Quantity or radians
-    :type PA: `astropy.units.Quantity` | float
-
-    """
-
-    def __init__(self, x0, y0, fwhm_x, fwhm_y, PA):
-        """
-        2D Gaussian for use as a kernel
-
+    Example usage:
         create the kernel:
-        g=G2D(x0, y0, fwhm_x, fwhm_y, PA)
+        g = G2D(x0, y0, fwhm_x, fwhm_y, PA)
         and return the kernel:
-        g(x,y)
+        g(x, y)
 
-        :param x0: the mean x coordinate (pixels)
-        :type x0: float
-        :param y0: the mean y coordinate (pixels)
-        :type y0: float
-        :param fwhm_x: the FWHM in the x coordinate (pixels)
-        :type fwhm_x: float
-        :param fwhm_y: the FWHM in the y coordinate (pixels)
-        :type fwhm_y: float
-        :param PA: the PA of the Gaussian (E of N); Quantity or radians
-        :type PA: `astropy.units.Quantity` | float
-        """
+    Args:
+        x0 (float): the mean x coordinate (pixels)
+        y0 (float): the mean y coordinate (pixels)
+        fwhm_x (float): the FWHM in the x coordinate (pixels)
+        fwhm_y (float): the FWHM in the y coordinate (pixels)
+        pa (float): the position angle of the Gaussian (E of N) as a Quantity or in
+            radians.
+    """
+
+    def __init__(self, x0: float, y0: float, fwhm_x: float, fwhm_y: float, pa: float):
         self.x0 = x0
         self.y0 = y0
         self.fwhm_x = fwhm_x
         self.fwhm_y = fwhm_y
         # adjust the PA to agree with the selavy convention
         # E of N
-        self.PA = PA - 90 * u.deg
+        self.PA = pa - 90 * u.deg
         self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
         self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
 
@@ -118,17 +96,15 @@ class G2D:
             + np.cos(self.PA) ** 2 / 2 / self.sigma_y ** 2
         )
 
-    def __call__(self, x, y):
-        """
-        return the kernel evaluated at given coordinates
+    def __call__(self, x: float, y: float) -> np.ndarray:
+        """Return the kernel evaluated at given pixel coordinates.
 
-        :param x: x coordinate for evaluation
-        :type x: float
-        :param y: y coordinate for evaluation
-        :type y: float
+        Args:
+            x (float): x coordinate for evaluation
+            y (float): y coordinate for evaluation
 
-        :returns: the kernel evaluated at given coordinates
-        :rtype: `numpy.ndarray`, `numpy.ndarray`
+        Returns:
+            np.ndarray: the kernel evaluated at the given coordinates
         """
         return np.exp(
             -self.a * (x - self.x0) ** 2
@@ -138,40 +114,32 @@ class G2D:
 
 
 class ForcedPhot:
+    """Create a ForcedPhotometry object for processing an ASKAPSoft image.
+
+    Example usage:
+        forced_phot_obj = ForcedPhot(image, background, noise)
+        flux_islands, flux_err_islands, chisq_islands, dof_islands = forced_phot_obj.measure(islands)
+
+        where `islands` is an array `astropy.coordinates.SkyCoord` objects.
+
+    Args:
+        image (Union[str, fits.HDUList]): name of the primary image or FITS handle.
+        background (Union[str, fits.HDUList]): name of the background image or FITS handle.
+        noise (Union[str, fits.HDUList]): name of the noise map image or FITS handle.
+        verbose (bool, optional): whether to be verbose in output. Defaults to False.
+
+    Raises:
+        ArgumentError: an input type is not a supported.
+        FileNotFoundError: an input could not be opened.
     """
-    FP=ForcedPhot(image, background, noise)
-    create a ForcedPhotometry object for processing an ASKAPSoft image
 
-    :param image: name of the primary image or FITS handle
-    :type image: str | list
-    :param background: name of the background image or FITS handle
-    :type background: str | list
-    :param noise: name of the noise map image or FITS handle
-    :type noise: str | list
-
-    """
-
-    def __init__(self, image, background, noise, verbose=False):
-
-        """
-        FP=ForcedPhot(image, background, noise, verbose=False)
-        create a ForcedPhotometry object for processing an ASKAPSoft image
-        then use it:
-        flux_islands,flux_err_islands,chisq_islands,DOF_islands=FP.measure(P_islands)
-        where P is an array SkyCoord objects
-
-        :param image: name of the primary image or FITS handle
-        :type image: str | list
-        :param background: name of the background image or FITS handle
-        :type background: str | list
-        :param noise: name of the noise map image or FITS handle
-        :type noise: str | list
-        :param verbose: whether to be verbose in output (eventually replace with logging),
-            defaults to False
-        :type verbose: bool, optional
-
-        """
-
+    def __init__(
+        self,
+        image: Union[str, fits.HDUList],
+        background: Union[str, fits.HDUList],
+        noise: Union[str, fits.HDUList],
+        verbose: bool = False,
+    ):
         self.verbose = verbose
 
         if isinstance(image, str):
@@ -180,7 +148,7 @@ class ForcedPhot:
             except FileNotFoundError:
                 print("Unable to open image %s" % image)
                 raise
-        elif isinstance(image, list) and isinstance(image[0], fits.PrimaryHDU):
+        elif isinstance(image, fits.HDUList):
             self.fi = image
         else:
             raise ArgumentError("Do not understand input image")
@@ -190,9 +158,7 @@ class ForcedPhot:
             except FileNotFoundError:
                 print("Unable to open background image %s" % background)
                 raise
-        elif isinstance(background, list) and isinstance(
-            background[0], fits.PrimaryHDU
-        ):
+        elif isinstance(background, fits.HDUList):
             self.fb = background
         else:
             raise ArgumentError("Do not understand input background image")
@@ -202,7 +168,7 @@ class ForcedPhot:
             except FileNotFoundError:
                 print("Unable to open noise image %s" % noise)
                 raise
-        elif isinstance(noise, list) and isinstance(noise[0], fits.PrimaryHDU):
+        elif isinstance(noise, fits.HDUList):
             self.fn = noise
         else:
             raise ArgumentError("Do not understand input noise image")
@@ -232,26 +198,21 @@ class ForcedPhot:
         self.w = WCS(self.fi[0].header, naxis=2)
         self.pixelscale = (self.w.wcs.cdelt[1] * u.deg).to(u.arcsec)
 
-    def cluster(self, X0, Y0, threshold=1.5):
+    def cluster(self, X0: np.ndarray, Y0: np.ndarray, threshold: Optional[float] = 1.5):
+        """Identifies clusters among the given X, Y points that are within `threshold` * BMAJ
+            of each other using a KDTree algorithm. Results are stored in `self.clusters`
+            and `self.in_cluster`:
+                - `self.clusters` is a dict mapping cluster indices to a set of their members.
+                - `self.in_cluster` is a list of all of the sources in a cluster
+
+        Args:
+            X0 (np.ndarray): array of X coordinates of sources.
+            Y0 (np.ndarray): array of Y coordinates of sources.
+            threshold (float, optional): multiple of BMAJ for finding clusters.
+                Set to 0 or None to disable. Defaults to 1.5.
         """
-        cluster(X0, Y0, threshold=1.5)
-
-        identifies clusters among the X,Y points that are within threshold * BMAJ of each other
-        using a KDTree algorithm
-
-        saves self.clusters, self.in_cluster
-        self.clusters is a list of clusters (indices)
-        self.in_cluster is a list of all of the sources in a cluster
-
-        :param X0: array of X coordinates of sources
-        :type X0: `np.ndarray`
-        :param Y0: array of Y coordinates of sources
-        :type Y0: `np.ndarray`
-        :param threshold: multiple of BMAJ for finding clusters.  Set to 0 or None to disable,
-            defaults to 1.5
-        :type threshold: float | NoneType
-
-        """
+        self.clusters: Dict[int, set]
+        self.in_cluster: List[int]
         if threshold is None or threshold == 0:
             self.clusters = {}
             self.in_cluster = []
@@ -283,53 +244,49 @@ class ForcedPhot:
 
     def measure(
         self,
-        positions,
-        major_axes=None,
-        minor_axes=None,
-        position_angles=None,
-        nbeam=3,
-        cluster_threshold=1.5,
-        stamps=False,
-    ):
+        positions: "astropy.coordinates.SkyCoord",
+        major_axes: Optional["astropy.coordinates.Angle"] = None,
+        minor_axes: Optional["astropy.coordinates.Angle"] = None,
+        position_angles: Optional["astropy.coordinates.Angle"] = None,
+        nbeam: int = 3,
+        cluster_threshold: Optional[float] = 1.5,
+        stamps: bool = False,
+    ) -> Union[
+        Tuple[float, float, float, int],
+        Tuple[float, float, float, int, np.ndarray, np.ndarray],
+    ]:
+        """Perform the forced photometry returning the flux density and uncertainty.
+        Example usage:
+            flux, flux_err, chisq, dof = forced_phot_obj.measure(positions, nbeam=3)
+
+            or
+
+            flux, flux_err, chisq, dof, data, model = forced_phot_obj.measure(
+                positions, nbeam=3, stamps=True)
+
+        Args:
+            positions: Coordinates of sources to measure.
+            major_axes: FWHMs along major axes of sources to measure. If None, will use
+                header BMAJ. Defaults to None.
+            minor_axes: FWHMs along minor axes of sources to measure. If None, will use
+                header BMIN. Defaults to None.
+            position_angles: Position angles of sources to measure. If None, will use
+                header BPA. Defaults to None.
+            nbeam: Diameter of the square cutout for fitting in units of
+                the major axis. Defaults to 3.
+            cluster_threshold: Multiple of `major_axes` to use for identifying clusters.
+                Set to 0 or None to disable. Defaults to 1.5.
+            stamps: whether or not to also return a postage stamp. Can only be used on a
+                single source. Defaults to False.
+
+        Raises:
+            ArgumentError: stamps were requested for more than one object.
+            ArgumentError: an input argument was not a supported type.
+
+        Returns:
+            A tuple containing the flux, flux error, chi-squared value, degrees of
+            freedom. If `stamps` is True, the data and model are also returned.
         """
-        flux, flux_err, chisq, DOF = measure(positions,
-        major_axes=None, minor_axes=None, position_angles=None,
-        nbeam=3, cluster_threshold=1.5, stamps=False)
-
-        or
-        flux, flux_err, chisq, DOF, data, model = measure(positions,
-        major_axes=None, minor_axes=None, position_angles=None,
-        nbeam=3, cluster_threshold=1.5, stamps=False)
-
-        perform the forced photometry returning flux density and uncertainty
-
-        :param positions: array of coordinates for sources to measure
-        :type positions: `astropy.coordinates.sky_coordinate.SkyCoord`
-        :param major_axes: FWHMs along major axes of sources to measure, None will use header BMAJ,
-            defaults to None
-        :type major_axes: `numpy.ndarray` | float | NoneType, optional
-        :param minor_axes: FWHMs along minor axes of sources to measure, None will use header BMIN,
-            defaults to None
-        :type minor_axes: `numpy.ndarray` | float | NoneType, optional
-        :param position_angles: position angles of sources to measure, None will use header BPA,
-            defaults to None
-        :type position_angles: `astropy.units.Quantity` | Nonetype, optional
-        :param nbeam: Diameter of the square cutout for fitting in units of the major axis,
-            defaults to 1.5
-        :type nbeam: float, optional
-        :param cluster_threshold: multiple of BMAJ to use for identifying clusters, set to 0
-            or None to disable, defaults to 3
-        :type cluster_threhsold: float | NoneType, optional
-        :param stamps: whether or not to also return a postage stamp (can only be used on a
-            single source), defaults to False
-        :type stamps: bool, optional
-
-        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
-            if stamps=True
-        :rtype: `numpy.ndarray`|float, `numpy.ndarray`|float, `numpy.ndarray`|float,
-            `numpy.ndarray`|float, optionally `np.ndarray`,`np.ndarray`
-        """
-
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
         )
@@ -444,21 +401,21 @@ class ForcedPhot:
             else:
                 return flux, flux_err, chisq, DOF
 
-    def inject(self, flux, positions, nbeam=3):
-        """
-        inject(flux, positions, nbeam=3)
-        inject one or more fake point sources (defined by the header) into self.data
-        with the flux(es) and position(s) specified
+    def inject(
+        self,
+        flux: Union[float, np.ndarray],
+        positions: Union[float, np.ndarray],
+        nbeam: int = 3,
+    ):
+        """Inject one or more fake point sources (defined by the header) into `self.data`
+        with the flux(es) and position(s) specified.
 
-        :param flux: flux(es) of source(s) to inject in same units as the image
-        :type flux: `numpy.ndarray` | float
-        :param positions: position(s) of source(s) to inject
-        :type positions: `astropy.coordinates.sky_coordinate.SkyCoord`
-        :param nbeam: Diameter of the square cutout for injection in units of the major
-            axis, defaults to 3
-        :type nbeam: float, optional
+        Args:
+            flux: Flux(es) of source(s) to inject in same units as the image.
+            positions: Position(s) of source(s) to inject.
+            nbeam: Diameter of the square cutout for injection in units of the major axis.
+                Defaults to 3.
         """
-
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
         )
@@ -651,8 +608,6 @@ class ForcedPhot:
             `np.ndarray`,`np.ndarray`
 
         """
-        x0 = X0.mean()
-        y0 = Y0.mean()
         x = np.arange(xmin, xmax)
         y = np.arange(ymin, ymax)
         xx, yy = np.meshgrid(x, y)
