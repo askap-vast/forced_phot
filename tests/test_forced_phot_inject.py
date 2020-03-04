@@ -32,7 +32,7 @@ flux_inj = np.random.random_sample((n,)) * 100e-3 + 0.5e-3
 
 # inject with a wider kernel than recovery
 FP.inject(flux_inj, P_inj, nbeam=15)
-flux_recover, flux_err_recover = FP.measure(P_inj, cluster_threshold=None)
+flux_recover, flux_err_recover, *_ = FP.measure(P_inj, cluster_threshold=None)
 
 print(time.time() - t)
 plt.clf()

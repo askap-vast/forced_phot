@@ -381,16 +381,12 @@ class ForcedPhot:
             out = self._measure_cluster(
                 X0[ii], Y0[ii], xmin, xmax, ymin, ymax, a[ii], b[ii], pa[ii], stamps=stamps
             )
-            f, f_err, csq, dof = out[:4]
+            f, f_err, csq, _dof = out[:4]
             for k in range(len(ii)):
-                print("flux", flux.shape, "f", f.shape)
                 flux[ii[k]] = f[k]
-                print("flux_err", flux_err.shape, "f_err", f_err.shape)
                 flux_err[ii[k]] = f_err[k]
-                print("chisq", chisq.shape, "csq", csq.shape)
                 chisq[ii[k]] = csq[k]
-                print("dof", dof.shape, "f", f.shape)
-                dof[ii[k]] = dof[k]
+                dof[ii[k]] = _dof[k]
 
         if positions.isscalar:
             if stamps:
