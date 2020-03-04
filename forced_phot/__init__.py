@@ -384,12 +384,12 @@ class ForcedPhot:
 
         if positions.isscalar:
             if stamps:
-                return flux[0], flux_err[0], chisq[0], dof[0], out[-2], out[-1]
+                return flux[0], flux_err[0], chisq[0], dof[0], out[-3], out[-2], out[-1]
             else:
                 return flux[0], flux_err[0], chisq[0], dof[0]
         else:
             if stamps:
-                return flux, flux_err, chisq, dof, out[-2], out[-1]
+                return flux, flux_err, chisq, dof, out[-3], out[-2], out[-1]
             else:
                 return flux, flux_err, chisq, dof
 
@@ -508,6 +508,7 @@ class ForcedPhot:
                 np.prod(xx.shape) - 1,
                 self.data[sl],
                 flux * kernel,
+                g,
             )
 
     def _inject(self, flux, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa):
