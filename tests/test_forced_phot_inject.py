@@ -1,29 +1,26 @@
-from astropy.table import Table
-from astropy import units as u, constants as c
-import numpy as np
-from astropy.coordinates import SkyCoord
-import pandas as pd
 import time
-import astropy.wcs
+import warnings
+from astropy import units as u, constants as c
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.io.fits.verify import VerifyWarning
+from astropy.table import Table
+import astropy.wcs
 from astropy.utils.exceptions import AstropyWarning
-import warnings
-
-# suppress FITS verification warnings
-warnings.simplefilter("ignore", category=AstropyWarning)
-
 from matplotlib import pyplot as plt
+import numpy as np
+import pandas as pd
 
 import forced_phot
 
+# suppress FITS verification warnings
+warnings.simplefilter("ignore", category=AstropyWarning)
 
 image = "image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits"
 background = "meanMap.image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits"
 noise = "noiseMap.image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits"
 
-
-FP = forced_phot.forced_phot(image, background, noise)
+FP = forced_phot.ForcedPhot(image, background, noise)
 
 n = 500
 t = time.time()
@@ -44,7 +41,6 @@ plt.plot([0, flux_inj.max()], [0, 0], "k--")
 plt.xlabel("Injected flux density (Jy)")
 plt.ylabel("(Recovered - injected (Jy)")
 plt.title(
-    "$\chi^2=%.1f$ (%d DOF)"
+    r"$\chi^2=%.1f$ (%d DOF)"
     % ((((flux_recover - flux_inj) / flux_err_recover) ** 2).sum(), n)
 )
-

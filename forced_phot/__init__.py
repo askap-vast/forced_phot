@@ -37,7 +37,7 @@ flux_islands, flux_err_islands, chisq_islands, DOF_islands = FP.measure(
 """
 
 from itertools import chain
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import astropy
 import astropy.nddata
@@ -252,10 +252,7 @@ class ForcedPhot:
         nbeam: int = 3,
         cluster_threshold: Optional[float] = 1.5,
         stamps: bool = False,
-    ) -> Union[
-        Tuple[float, float, float, int],
-        Tuple[float, float, float, int, np.ndarray, np.ndarray],
-    ]:
+    ) -> Tuple[Any, ...]:
         """Perform the forced photometry returning the flux density and uncertainty.
         Example usage:
             flux, flux_err, chisq, dof = forced_phot_obj.measure(positions, nbeam=3)
@@ -375,7 +372,7 @@ class ForcedPhot:
         for j in range(len(clusters)):
             ii = np.array(list(clusters[j]))
             if self.verbose:
-                print("Fitting a cluster of sources %s" % i)
+                print("Fitting a cluster of sources %s" % ii)
             xmin = max(int(round((X0[ii] - npix[ii]).min())), 0)
             xmax = min(int(round((X0[ii] + npix[ii]).max())), self.data.shape[-1]) + 1
             ymin = max(int(round((Y0[ii] - npix[ii]).min())), 0)
@@ -386,9 +383,13 @@ class ForcedPhot:
             )
             f, f_err, csq, dof = out[:4]
             for k in range(len(ii)):
+                print("flux", flux.shape, "f", f.shape)
                 flux[ii[k]] = f[k]
+                print("flux_err", flux_err.shape, "f_err", f_err.shape)
                 flux_err[ii[k]] = f_err[k]
+                print("chisq", chisq.shape, "csq", csq.shape)
                 chisq[ii[k]] = csq[k]
+                print("dof", dof.shape, "f", f.shape)
                 dof[ii[k]] = dof[k]
 
         if positions.isscalar:

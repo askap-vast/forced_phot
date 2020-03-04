@@ -1,22 +1,20 @@
-from astropy.table import Table
-from astropy import units as u, constants as c
-import numpy as np
-from astropy.coordinates import SkyCoord
-import pandas as pd
 import time
+import warnings
+from astropy import units as u, constants as c
+from astropy.table import Table
+from astropy.coordinates import SkyCoord
 import astropy.wcs
 from astropy.io import fits
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyWarning
-import warnings
-
-# suppress FITS verification warnings
-warnings.simplefilter("ignore", category=AstropyWarning)
-
+import pandas as pd
+import numpy as np
 from matplotlib import pyplot as plt
 
 import forced_phot
 
+# suppress FITS verification warnings
+warnings.simplefilter("ignore", category=AstropyWarning)
 
 image = "image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits"
 background = "meanMap.image.i.SB9668.cont.VAST_0341-50A.linmos.taylor.0.restored.fits"
@@ -76,19 +74,18 @@ for j in range(len(separations)):
         plt.plot([0, flux_inj.max()], [0, 0], "k--")
         plt.xlabel("Injected flux density (Jy)")
         plt.ylabel("(Recovered - injected (Jy)")
-        plt.title("$\chi^2=%.1f$ (%d DOF)" % (chi2_recover[j], 2 * n))
+        plt.title(r"$\chi^2=%.1f$ (%d DOF)" % (chi2_recover[j], 2 * n))
         plt.savefig("injection_%.1farcsec.pdf" % s.value)
 
 plt.clf()
 plt.plot(separations, chi2_inj_recover / 2 / n, "o", label="single source")
 plt.plot(separations, chi2_inj_cluster / 2 / n, "s", label="cluster")
-plt.plot(plt.gca().get_xlim(), np.array([1, 1]), "k--", label="$\chi^2/$DOF=1")
+plt.plot(plt.gca().get_xlim(), np.array([1, 1]), "k--", label=r"$\chi^2/$DOF=1")
 plt.plot(
     FP.BMAJ.to(u.arcsec) * np.array([1, 1]), plt.gca().get_ylim(), ":", label="BMAJ"
 )
 plt.xlabel("Source separation (arcsec)")
-plt.ylabel("$\chi^2$ for recovered vs. injected")
+plt.ylabel(r"$\chi^2$ for recovered vs. injected")
 plt.legend()
 
 plt.savefig("injection_statistics.pdf")
-
