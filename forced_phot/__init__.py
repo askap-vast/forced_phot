@@ -132,6 +132,7 @@ class ForcedPhot:
     Raises:
         ArgumentError: an input type is not a supported.
         FileNotFoundError: an input could not be opened.
+        KeyError: could not get required header info from the image
     """
 
     def __init__(
@@ -179,14 +180,12 @@ class ForcedPhot:
             and ("BMIN" in self.fi[0].header.keys())
             and ("BPA" in self.fi[0].header.keys())
         ):
-            print("Image header does not have BMAJ, BMIN, BPA keywords")
-            self.BMAJ = None
-            self.BMIN = None
-            self.BPA = None
-        else:
-            self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
-            self.BMIN = self.fi[0].header["BMIN"] * u.deg
-            self.BPA = self.fi[0].header["BPA"] * u.deg
+            
+            raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
+
+        self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
+        self.BMIN = self.fi[0].header["BMIN"] * u.deg
+        self.BPA = self.fi[0].header["BPA"] * u.deg
 
         self.data = (self.fi[0].data - self.fb[0].data).squeeze()
         self.bgdata = self.fb[0].data.squeeze()
