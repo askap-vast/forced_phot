@@ -662,7 +662,7 @@ class ForcedPhot:
             flux[k] = out.__getattr__("amplitude_%d" % k).value
             # a weighted average would be better for the noise here, but
             # to simplify just use the noise map at the central source position
-            flux_err[k] = self.noisedata[np.int16(round(Y0[k])), np.int16(round(Y0[k]))]
+            flux_err[k] = self.noisedata[np.int16(round(Y0[k])), np.int16(round(X0[k]))]
 
         if stamps:
             return flux, flux_err, chisq, dof, d, model
