@@ -50,12 +50,15 @@ from astropy.modeling import fitting, models
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
+pa_offset = 90*u.deg
 
 class ArgumentError(Exception):
     pass
 
 
 class G2D:
+
+
     """2D Gaussian for use as a kernel.
 
     Example usage:
@@ -80,7 +83,7 @@ class G2D:
         self.fwhm_y = fwhm_y
         # adjust the PA to agree with the selavy convention
         # E of N
-        self.pa = pa - 90 * u.deg
+        self.pa = pa - pa_offset
         self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
         self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
 
@@ -399,6 +402,9 @@ class ForcedPhot:
         self,
         flux: Union[float, np.ndarray],
         positions: Union[float, np.ndarray],
+        major_axes: Optional["astropy.coordinates.Angle"] = None,
+        minor_axes: Optional["astropy.coordinates.Angle"] = None,
+        position_angles: Optional["astropy.coordinates.Angle"] = None,
         nbeam: int = 3,
     ):
         """Inject one or more fake point sources (defined by the header) into `self.data`
@@ -407,6 +413,12 @@ class ForcedPhot:
         Args:
             flux: Flux(es) of source(s) to inject in same units as the image.
             positions: Position(s) of source(s) to inject.
+            major_axes: FWHMs along major axes of sources to measure. If None, will use
+                header BMAJ. Defaults to None.
+            minor_axes: FWHMs along minor axes of sources to measure. If None, will use
+                header BMIN. Defaults to None.
+            position_angles: Position angles of sources to measure. If None, will use
+                header BPA. Defaults to None.
             nbeam: Diameter of the square cutout for injection in units of the major axis.
                 Defaults to 3.
         """
@@ -415,9 +427,41 @@ class ForcedPhot:
         )
         flux = np.atleast_1d(flux)
 
-        a = self.BMAJ.to(u.arcsec) * np.ones(len(X0))
-        b = self.BMIN.to(u.arcsec) * np.ones(len(X0))
-        pa = self.BPA * np.ones(len(X0))
+
+        if major_axes is None:
+            a = self.BMAJ.to(u.arcsec) * np.ones(len(X0))
+        else:
+            if not isinstance(major_axes, astropy.units.Quantity):
+                raise ArgumentError("Major axes must be a quantity")
+
+            if major_axes.isscalar:
+                a = (major_axes * np.ones(len(X0))).to(u.arcsec)
+            else:
+                a = major_axes.to(u.arcsec)
+                a[np.isnan(a)] = (self.BMAJ).to(u.arcsec)
+        if minor_axes is None:
+            b = self.BMIN.to(u.arcsec) * np.ones(len(X0))
+        else:
+            if not isinstance(minor_axes, astropy.units.Quantity):
+                raise ArgumentError("Minor axes must be a quantity")
+
+            if minor_axes.isscalar:
+                b = (minor_axes * np.ones(len(X0))).to(u.arcsec)
+            else:
+                b = minor_axes.to(u.arcsec)
+                b[np.isnan(b)] = (self.BMIN).to(u.arcsec)
+        if position_angles is None:
+            pa = self.BPA * np.ones(len(X0))
+        else:
+            if not isinstance(position_angles, astropy.units.Quantity):
+                raise ArgumentError("Position angles must be a quantity")
+
+            if position_angles.isscalar:
+                pa = position_angles * np.ones(len(X0))
+            else:
+                pa = position_angles
+                pa[np.isnan(pa)] = self.BPA
+
 
         npix = ((nbeam / 2.0) * a / self.pixelscale).value
         xmin = np.int16(np.round(X0 - npix))
@@ -619,7 +663,7 @@ class ForcedPhot:
                     y_stddev=(b[k] / self.pixelscale).value
                     / 2
                     / np.sqrt(2 * np.log(2)),
-                    theta=(pa[k] - 90 * u.deg).to(u.rad).value,
+                    theta=(pa[k] - pa_offset).to(u.rad).value,
                     fixed={
                         "x_mean": True,
                         "y_mean": True,
@@ -638,7 +682,7 @@ class ForcedPhot:
                     y_stddev=(b[k] / self.pixelscale).value
                     / 2
                     / np.sqrt(2 * np.log(2)),
-                    theta=(pa[k] - 90 * u.deg).to(u.rad).value,
+                    theta=(pa[k] - pa_offset).to(u.rad).value,
                     fixed={
                         "x_mean": True,
                         "y_mean": True,
