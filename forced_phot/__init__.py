@@ -559,8 +559,8 @@ class ForcedPhot:
         d = self.data[sl]
         ndata = np.prod(xx.shape)
         if np.any(np.isnan(n)):
-            # protect against NaNs in the fit
-            good = np.isfinite(n)
+            # protect against NaNs in the data or rms map
+            good = np.isfinite(n) & np.isfinite(d)
             n = n[good]
             d = d[good]
             kernel = kernel[good]
@@ -739,8 +739,8 @@ class ForcedPhot:
         sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
         n = self.noisedata[sl]
         d = self.data[sl]
-        # protect against NaNs in the fit
-        good = np.isfinite(n)
+        # protect against NaNs in the data or rms map
+        good = np.isfinite(n) & np.isfinite(d)
 
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
