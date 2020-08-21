@@ -50,14 +50,14 @@ from astropy.modeling import fitting, models
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
-pa_offset = 90*u.deg
+pa_offset = 90 * u.deg
+
 
 class ArgumentError(Exception):
     pass
 
 
 class G2D:
-
 
     """2D Gaussian for use as a kernel.
 
@@ -183,7 +183,7 @@ class ForcedPhot:
             and ("BMIN" in self.fi[0].header.keys())
             and ("BPA" in self.fi[0].header.keys())
         ):
-            
+
             raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
 
         self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
@@ -251,6 +251,7 @@ class ForcedPhot:
         position_angles: Optional["astropy.coordinates.Angle"] = None,
         nbeam: int = 3,
         cluster_threshold: Optional[float] = 1.5,
+        allow_nan: bool = True,
         stamps: bool = False,
     ) -> Tuple[Any, ...]:
         """Perform the forced photometry returning the flux density and uncertainty.
@@ -260,7 +261,7 @@ class ForcedPhot:
             or
 
             flux, flux_err, chisq, dof, data, model = forced_phot_obj.measure(
-                positions, nbeam=3, stamps=True)
+                positions, nbeam=3, allow_nan=True, stamps=True)
 
         Args:
             positions: Coordinates of sources to measure.
@@ -274,6 +275,8 @@ class ForcedPhot:
                 the major axis. Defaults to 3.
             cluster_threshold: Multiple of `major_axes` to use for identifying clusters.
                 Set to 0 or None to disable. Defaults to 1.5.
+            allow_nan: whether or not to try to measure sources where some RMS values may
+                be NaN.  Defaults to True.
             stamps: whether or not to also return a postage stamp. Can only be used on a
                 single source. Defaults to False.
 
@@ -362,6 +365,7 @@ class ForcedPhot:
                 a[i],
                 b[i],
                 pa[i],
+                allow_nan=allow_nan,
                 stamps=stamps,
             )
 
@@ -378,7 +382,17 @@ class ForcedPhot:
             ymax = min(int(round((Y0[ii] + npix[ii]).max())), self.data.shape[-2]) + 1
 
             out = self._measure_cluster(
-                X0[ii], Y0[ii], xmin, xmax, ymin, ymax, a[ii], b[ii], pa[ii], stamps=stamps
+                X0[ii],
+                Y0[ii],
+                xmin,
+                xmax,
+                ymin,
+                ymax,
+                a[ii],
+                b[ii],
+                pa[ii],
+                allow_nan=allow_nan,
+                stamps=stamps,
             )
             f, f_err, csq, _dof = out[:4]
             for k in range(len(ii)):
@@ -427,7 +441,6 @@ class ForcedPhot:
         )
         flux = np.atleast_1d(flux)
 
-
         if major_axes is None:
             a = self.BMAJ.to(u.arcsec) * np.ones(len(X0))
         else:
@@ -462,7 +475,6 @@ class ForcedPhot:
                 pa = position_angles
                 pa[np.isnan(pa)] = self.BPA
 
-
         npix = ((nbeam / 2.0) * a / self.pixelscale).value
         xmin = np.int16(np.round(X0 - npix))
         xmax = np.int16(np.round(X0 + npix)) + 1
@@ -487,14 +499,16 @@ class ForcedPhot:
                 pa[i],
             )
 
-    def _measure(self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False):
+    def _measure(
+        self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False
+    ):
         """
-        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False)
+        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
 
         or
 
         flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
-            pa, stamps=False)
+            pa, allow_nan=True, stamps=False)
 
         forced photometry for a single source
         if stamps is True, will also output data and kernel postage stamps
@@ -517,6 +531,9 @@ class ForcedPhot:
         :type b: `astropy.units.Quantity`
         :param pa: position angle in angular units
         :type pa: `astropy.units.Quantity`
+        :param allow_nan: whether or not to try to measure sources even if some RMS values
+            are NaN.  Defaults to True
+        :type allow_nan: bool, optional
         :param stamps: whether or not to return postage stamps of the data and model for
             a single source, defaults to False
         :type stamps: bool, optional
@@ -539,19 +556,42 @@ class ForcedPhot:
         # the uncertainty on the amplitude is just the noise at the position of the source
         # so do a weighted average over the beam
         n = self.noisedata[sl]
-        flux = ((self.data[sl]) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
+        d = self.data[sl]
+        ndata = np.prod(xx.shape)
+        if np.any(np.isnan(n)):
+            # protect against NaNs in the data or rms map
+            good = np.isfinite(n) & np.isfinite(d)
+            n = n[good]
+            d = d[good]
+            kernel = kernel[good]
+            ndata = good.sum()
+            if (not allow_nan) or (good.sum() == 0):
+                if not stamps:
+                    return np.nan, np.nan, np.nan, 0
+                else:
+                    return (
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        0,
+                        self.data[sl],
+                        np.nan * kernel,
+                        g,
+                    )
+
+        flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
         flux_err = ((n) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
 
-        chisq = (((self.data[sl] - kernel * flux) / n) ** 2).sum()
+        chisq = (((d - kernel * flux) / n) ** 2).sum()
 
         if not stamps:
-            return flux, flux_err, chisq, np.prod(xx.shape) - 1
+            return flux, flux_err, chisq, ndata - 1
         else:
             return (
                 flux,
                 flux_err,
                 chisq,
-                np.prod(xx.shape) - 1,
+                ndata - 1,
                 self.data[sl],
                 flux * kernel,
                 g,
@@ -605,15 +645,16 @@ class ForcedPhot:
         a,
         b,
         pa,
+        allow_nan=True,
         stamps=False,
         fitter=fitting.LevMarLSQFitter(),
     ):
         """
-        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, stamps=False,
-            fitter = fitting.LevMarLSQFitter())
+        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True,
+            stamps=False, fitter = fitting.LevMarLSQFitter())
         or
         flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
-            pa, stamps=False, fitter = fitting.LevMarLSQFitter())
+            pa, allow_nan=True, stamps=False, fitter = fitting.LevMarLSQFitter())
 
         forced photometry for a cluster of sources using astropy fitting
 
@@ -635,6 +676,9 @@ class ForcedPhot:
         :type b: `astropy.units.Quantity`
         :param pa: position angle of each source in angular units
         :type pa: `astropy.units.Quantity`
+        :param allow_nan: whether or not to try to measure sources even if some RMS values
+            are NaN.  Defaults to True
+        :type allow_nan: bool, optional
         :param stamps: whether or not to return postage stamps of the data and model,
             defaults to False
         :type stamps: bool, optional
@@ -695,13 +739,35 @@ class ForcedPhot:
         sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
         n = self.noisedata[sl]
         d = self.data[sl]
+        # protect against NaNs in the data or rms map
+        good = np.isfinite(n) & np.isfinite(d)
 
-        out = fitter(g, xx, yy, d, weights=1.0 / n)
-        model = out(xx, yy)
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
-        chisq = np.zeros(len(X0)) + (((d - model) / n) ** 2).sum()
-        dof = np.zeros(len(X0), dtype=np.int16) + np.prod(xx.shape) - len(X0)
+        if (not allow_nan) or (good.sum() == 0):
+            # no good points left
+            if stamps:
+                return (
+                    flux * np.nan,
+                    flux_err * np.nan,
+                    flux * np.nan,
+                    flux,
+                    d,
+                    d * np.nan,
+                )
+            else:
+                return (
+                    flux * np.nan,
+                    flux_err * np.nan,
+                    flux * np.nan,
+                    flux,
+                )
+
+        out = fitter(g, xx[good], yy[good], d[good], weights=1.0 / n[good])
+        model = out(xx, yy)
+        chisq = np.zeros(len(X0)) + (((d[good] - model[good]) / n[good]) ** 2).sum()
+        dof = np.zeros(len(X0), dtype=np.int16) + np.prod(xx[good].shape) - len(X0)
+
         for k in range(len(X0)):
             flux[k] = out.__getattr__("amplitude_%d" % k).value
             # a weighted average would be better for the noise here, but
