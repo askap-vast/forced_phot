@@ -291,7 +291,7 @@ class ForcedPhot:
 
         Returns:
             A tuple containing the flux, flux error, chi-squared value, degrees of
-            freedom. If `stamps` is True, the data and model are also returned.
+            freedom, cluster ID. If `stamps` is True, the data and model are also returned.
         """
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
@@ -356,6 +356,7 @@ class ForcedPhot:
         flux_err = np.zeros(len(X0))
         chisq = np.zeros(len(X0))
         dof = np.zeros(len(X0), dtype=np.int16)
+        iscluster = np.zeros(len(X0), dtype=np.int16)
 
         for i in range(len(X0)):
             if i in self.in_cluster:
@@ -405,17 +406,28 @@ class ForcedPhot:
                 flux_err[ii[k]] = f_err[k]
                 chisq[ii[k]] = csq[k]
                 dof[ii[k]] = _dof[k]
+                iscluster[ii[k]] = j + 1
 
         if positions.isscalar:
             if stamps:
-                return flux[0], flux_err[0], chisq[0], dof[0], out[-3], out[-2], out[-1]
+                return (
+                    flux[0],
+                    flux_err[0],
+                    chisq[0],
+                    dof[0],
+                    iscluster[0],
+                    out[-3],
+                    out[-2],
+                    out[-1],
+                )
             else:
-                return flux[0], flux_err[0], chisq[0], dof[0]
+                return flux[0], flux_err[0], chisq[0], dof[0], iscluster[0]
+
         else:
             if stamps:
-                return flux, flux_err, chisq, dof, out[-3], out[-2], out[-1]
+                return flux, flux_err, chisq, dof, iscluster, out[-3], out[-2], out[-1]
             else:
-                return flux, flux_err, chisq, dof
+                return flux, flux_err, chisq, dof, iscluster
 
     def inject(
         self,
