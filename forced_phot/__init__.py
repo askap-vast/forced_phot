@@ -874,7 +874,8 @@ class ForcedPhot:
         g = G2D(x0, y0, (a / self.pixelscale).value, (b / self.pixelscale).value, pa)
         kernel = g(xx, yy)
         flux = ((im.data - bg) * kernel / ns ** 2).sum() / (kernel ** 2 / ns ** 2).sum()
-        flux_err = ((ns) * kernel / ns ** 2).sum() / (kernel ** 2 / ns ** 2).sum()
+        flux_err = ((ns) * kernel / ns ** 2).sum() / (kernel / ns ** 2).sum()
+
         chisq = (((im.data - flux * kernel) / ns.data) ** 2).sum()
         dof = np.prod(xx.shape) - 1
         if not stamps:
