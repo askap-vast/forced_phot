@@ -568,7 +568,6 @@ class ForcedPhot:
         g = G2D(X0, Y0, (a / self.pixelscale).value, (b / self.pixelscale).value, pa)
 
         kernel = g(xx, yy)
-
         # uncertainties: see discussion in Section 3 of Condon (1997)
         # the uncertainty on the amplitude is just the noise at the position of the source
         # so do a weighted average over the beam
@@ -597,8 +596,7 @@ class ForcedPhot:
                     )
 
         flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
-        flux_err = ((n) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
-
+        flux_err = ((n) * kernel / n ** 2).sum() / (kernel / n ** 2).sum()
         chisq = (((d - kernel * flux) / n) ** 2).sum()
 
         if not stamps:
