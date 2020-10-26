@@ -592,7 +592,6 @@ class ForcedPhot:
                         0,
                         self.data[sl],
                         np.nan * kernel,
-                        g,
                     )
 
         flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
@@ -609,7 +608,6 @@ class ForcedPhot:
                 ndata - 1,
                 self.data[sl],
                 flux * kernel,
-                g,
             )
 
     def _inject(self, flux, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa):
