@@ -39,6 +39,7 @@ flux_islands, flux_err_islands, chisq_islands, DOF_islands = FP.measure(
 from itertools import chain
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import logging
 import astropy
 import astropy.nddata
 import astropy.wcs
@@ -50,6 +51,9 @@ from astropy.modeling import fitting, models
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
+
+logger = logging.getLogger(__name__)
+
 pa_offset = 90 * u.deg
 
 
@@ -58,7 +62,6 @@ class ArgumentError(Exception):
 
 
 class G2D:
-
     """2D Gaussian for use as a kernel.
 
     Example usage:
@@ -151,8 +154,7 @@ class ForcedPhot:
             try:
                 self.fi = fits.open(image)
             except FileNotFoundError:
-                print("Unable to open image %s" % image)
-                raise
+                logger.exception("Unable to open image %s", image)
         elif isinstance(image, fits.HDUList):
             self.fi = image
         else:
@@ -161,8 +163,7 @@ class ForcedPhot:
             try:
                 self.fb = fits.open(background)
             except FileNotFoundError:
-                print("Unable to open background image %s" % background)
-                raise
+                logger.exception("Unable to open background image %s", background)
         elif isinstance(background, fits.HDUList):
             self.fb = background
         else:
@@ -171,8 +172,7 @@ class ForcedPhot:
             try:
                 self.fn = fits.open(noise)
             except FileNotFoundError:
-                print("Unable to open noise image %s" % noise)
-                raise
+                logger.exception("Unable to open noise image %s", noise)
         elif isinstance(noise, fits.HDUList):
             self.fn = noise
         else:
@@ -189,6 +189,9 @@ class ForcedPhot:
         self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
         self.BMIN = self.fi[0].header["BMIN"] * u.deg
         self.BPA = self.fi[0].header["BPA"] * u.deg
+
+        self.NAXIS1 = self.fi[0].header["NAXIS1"]
+        self.NAXIS2 = self.fi[0].header["NAXIS2"]
 
         self.data = (self.fi[0].data - self.fb[0].data).squeeze()
         self.bgdata = self.fb[0].data.squeeze()
@@ -246,7 +249,9 @@ class ForcedPhot:
                         self.clusters[j].add(k)
                 else:
                     self.clusters[i] = set(indices)
-        self.in_cluster = sorted(list((chain.from_iterable([*self.clusters.values()]))))
+        self.in_cluster = sorted(
+            list(chain.from_iterable([*self.clusters.values()]))
+        )
 
     def measure(
         self,
@@ -258,14 +263,15 @@ class ForcedPhot:
         cluster_threshold: Optional[float] = 1.5,
         allow_nan: bool = True,
         stamps: bool = False,
-    ) -> Tuple[Any, ...]:
+        edge_buffer: float = 1.0
+    ) -> Union[Tuple[Any, Any, Any, Any, Any], Tuple[Any, Any, Any, Any, Any, Any, Any]]:
         """Perform the forced photometry returning the flux density and uncertainty.
         Example usage:
-            flux, flux_err, chisq, dof = forced_phot_obj.measure(positions, nbeam=3)
+            flux, flux_err, chisq, dof, cluster_id = forced_phot_obj.measure(positions, nbeam=3)
 
             or
 
-            flux, flux_err, chisq, dof, data, model = forced_phot_obj.measure(
+            flux, flux_err, chisq, dof, cluster_id, data, model = forced_phot_obj.measure(
                 positions, nbeam=3, allow_nan=True, stamps=True)
 
         Args:
@@ -296,6 +302,7 @@ class ForcedPhot:
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
         )
+        X0, Y0 = self._filter_out_of_range(X0, Y0, nbeam, edge_buffer)
         self.cluster(X0, Y0, threshold=cluster_threshold)
 
         if stamps:
@@ -416,7 +423,6 @@ class ForcedPhot:
                     chisq[0],
                     dof[0],
                     iscluster[0],
-                    out[-3],
                     out[-2],
                     out[-1],
                 )
@@ -424,8 +430,12 @@ class ForcedPhot:
                 return flux[0], flux_err[0], chisq[0], dof[0], iscluster[0]
 
         else:
+            flux, flux_err, chisq, dof = self.reshape_output(
+                [flux, flux_err, chisq, dof],
+                self.idx_mask
+            )
             if stamps:
-                return flux, flux_err, chisq, dof, iscluster, out[-3], out[-2], out[-1]
+                return flux, flux_err, chisq, dof, iscluster, out[-2], out[-1]
             else:
                 return flux, flux_err, chisq, dof, iscluster
 
@@ -568,12 +578,14 @@ class ForcedPhot:
         g = G2D(X0, Y0, (a / self.pixelscale).value, (b / self.pixelscale).value, pa)
 
         kernel = g(xx, yy)
+
         # uncertainties: see discussion in Section 3 of Condon (1997)
         # the uncertainty on the amplitude is just the noise at the position of the source
         # so do a weighted average over the beam
         n = self.noisedata[sl]
         d = self.data[sl]
         ndata = np.prod(xx.shape)
+
         if np.any(np.isnan(n)):
             # protect against NaNs in the data or rms map
             good = np.isfinite(n) & np.isfinite(d)
@@ -609,6 +621,38 @@ class ForcedPhot:
                 self.data[sl],
                 flux * kernel,
             )
+
+    def _filter_out_of_range(self, X0, Y0, nbeam, edge_buffer=1.):
+        """
+        X0, Y0 = _filter_out_of_range(X0, Y0, nbeam)
+        Filter out sources which are beyond the image range.
+
+        :param X0: x coordinate of source to measure
+        :type X0: float
+        :param Y0: y coordinate of source to measure
+        :type Y0: float
+        nbeam: Diameter of the square cutout for fitting in units of
+            the major axis. Defaults to 3.
+        """
+        npix = round((nbeam / 2. * self.BMAJ.to('arcsec') / self.pixelscale).value)
+
+        npix = int(round(npix * edge_buffer))
+
+        X0_mask = (X0 < npix) | (X0 > self.NAXIS1 - npix)
+        Y0_mask = (Y0 < npix) | (Y0 > self.NAXIS2 - npix)
+
+        final_mask = np.logical_or(
+            X0_mask, Y0_mask
+        )
+
+        logger.debug(
+            "Removing %i sources that are outside of the image range",
+            np.sum(final_mask)
+        )
+        # save the mask to reconstruct arrays
+        self.idx_mask = final_mask
+
+        return X0[~final_mask], Y0[~final_mask]
 
     def _inject(self, flux, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa):
         """
@@ -757,6 +801,7 @@ class ForcedPhot:
 
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
+
         if (np.any(~good) and (not allow_nan)) or (good.sum() == 0):
             # either >=1 bad point and no bad points allowed
             # OR
@@ -781,7 +826,7 @@ class ForcedPhot:
         try:
             out = fitter(g, xx[good], yy[good], d[good], weights=1.0 / n[good])
         except TypeError as err:
-            print("Unable to fit cluster: {0}".format(err))
+            logger.debug("Unable to fit cluster: %s", err)
             if stamps:
                 return (
                     flux * np.nan,
@@ -880,3 +925,12 @@ class ForcedPhot:
             return flux, flux_err, chisq, dof
         else:
             return flux, flux_err, chisq, dof, im.data, flux * kernel
+
+    @staticmethod
+    def reshape_output(inputs_list, mask):
+        out = []
+        for el in inputs_list:
+            myarr = np.zeros(mask.shape)
+            myarr[np.where(mask == False)] = el
+            out.append(myarr)
+        return tuple(out)
