@@ -122,90 +122,15 @@ class G2D:
             - self.c * (y - self.y0) ** 2
         )
 
-
-specs = [
-    ('x0', float64),
-    ('y0', float64),
-    ('fwhm_x', float64),
-    ('fwhm_y', float64),
-    ('pa', float64),
-    ('sigma_x', float64),
-    ('sigma_y', float64),
-    ('a', float64),
-    ('b', float64),
-    ('c', float64),
-]
-
-@jitclass(specs)
-class G2DJit:
-    """2D Gaussian for use as a kernel.
-
-    Example usage:
-        create the kernel:
-        g = G2D(x0, y0, fwhm_x, fwhm_y, PA)
-        and return the kernel:
-        g(x, y)
-
-    Args:
-        x0 (float): the mean x coordinate (pixels)
-        y0 (float): the mean y coordinate (pixels)
-        fwhm_x (float): the FWHM in the x coordinate (pixels)
-        fwhm_y (float): the FWHM in the y coordinate (pixels)
-        pa (float): the position angle of the Gaussian (E of N) as a Quantity or in
-            radians.
-    """
-    def __init__(self, x0: float, y0: float, fwhm_x: float, fwhm_y: float, pa: float):
-        self.x0 = x0
-        self.y0 = y0
-        self.fwhm_x = fwhm_x
-        self.fwhm_y = fwhm_y
-        # adjust the PA to agree with the selavy convention
-        # E of N
-        self.pa = pa - pa_offset
-        self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
-        self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
-
-        self.a = (
-            np.cos(self.pa) ** 2 / 2 / self.sigma_x ** 2
-            + np.sin(self.pa) ** 2 / 2 / self.sigma_y ** 2
-        )
-        self.b = (
-            np.sin(2 * self.pa) / 2 / self.sigma_x ** 2
-            - np.sin(2 * self.pa) / 2 / self.sigma_y ** 2
-        )
-        self.c = (
-            np.sin(self.pa) ** 2 / 2 / self.sigma_x ** 2
-            + np.cos(self.pa) ** 2 / 2 / self.sigma_y ** 2
-        )
-
-    def evaluate(self, x: float, y: float) -> np.ndarray:
-        """Return the kernel evaluated at given pixel coordinates.
-
-        Args:
-            x (float): x coordinate for evaluation
-            y (float): y coordinate for evaluation
-
-        Returns:
-            np.ndarray: the kernel evaluated at the given coordinates
-        """
-        return np.exp(
-            -self.a * (x - self.x0) ** 2
-            - self.b * (x - self.x0) * (y - self.y0)
-            - self.c * (y - self.y0) ** 2
-        )
-
-specs = [
-    ('x', nb.float64[:]),
-    ('y', nb.float64[:]),
-    ('x0', float64),
-    ('y0', float64),
-    ('fwhm_x', float64),
-    ('fwhm_y', float64),
-    ('pa', float64),
-]
-
-
-specs = (nb.int64[:,:], nb.int64[:,:], float64, float64, float64, float64, float64)
+specs = (
+    nb.int64[:,:],
+    nb.int64[:,:],
+    float64,
+    float64,
+    float64,
+    float64,
+    float64
+)
 @njit(specs)
 def get_kernel(
     x: np.ndarray, 
@@ -250,7 +175,7 @@ def _convolution(d, n, kernel):
     return flux, flux_err, chisq
 
 @njit
-def meshgrid_jit(xmin, xmax, ymin, ymax):
+def _meshgrid(xmin, xmax, ymin, ymax):
     x = np.arange(xmin, xmax)
     y = np.arange(ymin, ymax)
     
@@ -261,6 +186,120 @@ def meshgrid_jit(xmin, xmax, ymin, ymax):
             xx[j,i] = x[i]
             yy[j,i] = y[j]
     return xx, yy
+
+def _measure_jit(
+        data,
+        noisedata,
+        pixelscale,
+        X0,
+        Y0,
+        xmin,
+        xmax,
+        ymin,
+        ymax,
+        a,
+        b,
+        pa,
+        allow_nan=True,
+        stamps=False
+    ):
+        """
+        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
+
+        or
+
+        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
+            pa, allow_nan=True, stamps=False)
+
+        forced photometry for a single source
+        if stamps is True, will also output data and kernel postage stamps
+
+        :param X0: x coordinate of source to measure
+        :type X0: float
+        :param Y0: y coordinate of source to measure
+        :type Y0: float
+        :param xmin: min x coordinate of postage stamp for measuring
+        :type xmin: int
+        :param xmax: max x coordinate of postage stamp for measuring
+        :type xmax: int
+        :param ymin: min y coordinate of postage stamp for measuring
+        :type ymin: int
+        :param ymax: max y coordinate of postage stamp for measuring
+        :type ymax: int
+        :param a: fwhm along major axis in angular units
+        :type a: `astropy.units.Quantity`
+        :param b: fwhm along minor axis in angular units
+        :type b: `astropy.units.Quantity`
+        :param pa: position angle in angular units
+        :type pa: `astropy.units.Quantity`
+        :param allow_nan: whether or not to try to measure sources even if some RMS values
+            are NaN.  Defaults to True
+        :type allow_nan: bool, optional
+        :param stamps: whether or not to return postage stamps of the data and model for
+            a single source, defaults to False
+        :type stamps: bool, optional
+
+        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
+            if stamps=True
+        :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`
+        """
+        sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
+        n = noisedata[sl]
+        d = data[sl]
+        contains_nan = np.any(np.isnan(n)) or np.any(np.isnan(d))
+        
+        if contains_nan:
+            # protect against NaNs in the data or rms map
+            good = np.isfinite(n) & np.isfinite(d)
+            if (not allow_nan) or (good.sum() == 0):
+                if not stamps:
+                    return np.nan, np.nan, np.nan, 0
+                else:
+                    return (
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        0,
+                        d,
+                        np.nan * d,
+                    )
+
+        d_orig = d
+        xx, yy = _meshgrid(xmin, xmax, ymin, ymax)
+        ndata = np.size(xx)
+        
+        # unfortunately we have to make a custom kernel for each object
+        # since the fractional-pixel offsets change for each
+        
+        kernel = get_kernel(xx,
+                            yy,
+                            X0,
+                            Y0,
+                            (a/pixelscale).value,
+                            (b/pixelscale).value,
+                            pa.to(u.deg).value
+                            )
+
+        if contains_nan:
+            # protect against NaNs in the data or rms map
+            n = n[good]
+            d = d[good]
+            kernel = kernel[good]
+            ndata = good.sum()
+
+        flux, flux_err, chisq = _convolution(d, n, kernel)
+
+        if not stamps:
+            return flux, flux_err, chisq, ndata - 1
+        else:
+            return (
+                flux,
+                flux_err,
+                chisq,
+                ndata - 1,
+                d_orig,
+                flux * kernel,
+            )
 
 from timeit import default_timer as timer
 
@@ -291,75 +330,87 @@ class ForcedPhot:
         background: Union[str, fits.HDUList],
         noise: Union[str, fits.HDUList],
         verbose: bool = False,
+        use_numba: bool = False,
     ):
         self.verbose = verbose
+        self.use_numba = use_numba
         
         start = timer()
         if isinstance(image, str):
             try:
-                self.fi = fits.open(image)
+                fi = fits.open(image)
             except FileNotFoundError:
                 logger.exception("Unable to open image %s", image)
         elif isinstance(image, fits.HDUList):
-            self.fi = image
+            fi = image
         else:
             raise ArgumentError("Do not understand input image")
         if isinstance(background, str):
             try:
-                self.fb = fits.open(background)
+                fb = fits.open(background)
             except FileNotFoundError:
                 logger.exception("Unable to open background image %s", background)
         elif isinstance(background, fits.HDUList):
-            self.fb = background
+            fb = background
         else:
             raise ArgumentError("Do not understand input background image")
         if isinstance(noise, str):
             try:
-                self.fn = fits.open(noise)
+                fn = fits.open(noise)
             except FileNotFoundError:
                 logger.exception("Unable to open noise image %s", noise)
         elif isinstance(noise, fits.HDUList):
-            self.fn = noise
+            fn = noise
         else:
             raise ArgumentError("Do not understand input noise image")
         end = timer()
         
         print(f"Time to validate data: {end-start}s")
         if not (
-            ("BMAJ" in self.fi[0].header.keys())
-            and ("BMIN" in self.fi[0].header.keys())
-            and ("BPA" in self.fi[0].header.keys())
+            ("BMAJ" in fi[0].header.keys())
+            and ("BMIN" in fi[0].header.keys())
+            and ("BPA" in fi[0].header.keys())
         ):
 
             raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
 
         start = timer()
-        self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
-        self.BMIN = self.fi[0].header["BMIN"] * u.deg
-        self.BPA = self.fi[0].header["BPA"] * u.deg
+        self.BMAJ = fi[0].header["BMAJ"] * u.deg
+        self.BMIN = fi[0].header["BMIN"] * u.deg
+        self.BPA = fi[0].header["BPA"] * u.deg
 
-        self.NAXIS1 = self.fi[0].header["NAXIS1"]
-        self.NAXIS2 = self.fi[0].header["NAXIS2"]
+        self.NAXIS1 = fi[0].header["NAXIS1"]
+        self.NAXIS2 = fi[0].header["NAXIS2"]
         end = timer()
         
         print(f"Time to initialise header info: {end-start}s")
-
-        start1 = timer()
-        self.data = (self.fi[0].data - self.fb[0].data).squeeze()
-        self.bgdata = self.fb[0].data.squeeze()
-        self.noisedata = self.fn[0].data.squeeze()
-        end1 = timer()
-        print(f"Time to squeeze: {end1-start1}s")
+        
+        start = timer()
+        self.data = (fi[0].data-fb[0].data).squeeze()
+        self.noisedata = fn[0].data.squeeze()
+        end = timer()
+        print(f"Time to squeeze (default): {end-start}s")
         
         # do this so that 0-regions in the background
         # or noise maps are set to NaN, and then
         # will be handled through other means
-        self.bgdata[self.bgdata == 0] = np.nan
         self.noisedata[self.noisedata == 0] = np.nan
-        self.twod = True  # TODO remove
+        
+        start = timer()
+        if self.use_numba:
+            self.data = self._byte_reorder(self.data)
+            self.noisedata = self._byte_reorder(self.noisedata)
+        end = timer()
+        print(f"Time to byte reorder: {end-start}s")
 
-        self.w = WCS(self.fi[0].header).celestial
+        self.w = WCS(fi[0].header, naxis=2).celestial
         self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
+
+    def _byte_reorder(self, arr):
+        if arr.dtype.byteorder != '=':
+            logger.warning("Numba requires native byte ordering. Converting.")
+            arr = arr.astype(arr.dtype.newbyteorder('='))
+        return arr
 
     def cluster(self, X0: np.ndarray, Y0: np.ndarray, threshold: Optional[float] = 1.5):
         """Identifies clusters among the given X, Y points that are within `threshold` * BMAJ
@@ -419,7 +470,6 @@ class ForcedPhot:
         allow_nan: bool = True,
         stamps: bool = False,
         edge_buffer: float = 1.0,
-        use_numba: bool = False,
         use_clusters: bool = True,
     ) -> Union[Tuple[Any, Any, Any, Any, Any], Tuple[Any, Any, Any, Any, Any, Any, Any]]:
         """Perform the forced photometry returning the flux density and uncertainty.
@@ -456,23 +506,19 @@ class ForcedPhot:
             A tuple containing the flux, flux error, chi-squared value, degrees of
             freedom, cluster ID. If `stamps` is True, the data and model are also returned.
         """
-        start = timer()
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
         )
         X0, Y0 = self._filter_out_of_range(X0, Y0, nbeam, edge_buffer)
         if use_clusters:
             self.cluster(X0, Y0, threshold=cluster_threshold)
-        end = timer()
-        print(f"Initial filtering: {end-start}")
-
+        
         if stamps:
             if len(X0) > 1 and not (
                 len(self.in_cluster) == len(X0) and len(self.clusters.keys()) == 1
             ):
                 raise ArgumentError("Cannot output postage stamps for >1 object")
 
-        start = timer()
         if major_axes is None:
             a = np.ones(len(X0)) * (self.BMAJ).to(u.arcsec)
         else:
@@ -484,9 +530,7 @@ class ForcedPhot:
             else:
                 a = major_axes.to(u.arcsec)
                 a[np.isnan(a)] = (self.BMAJ).to(u.arcsec)
-        end = timer()
-        print(f"Major axis handling: {end-start}")
-        start = timer()
+        
         if minor_axes is None:
             b = np.ones(len(X0)) * (self.BMIN).to(u.arcsec)
         else:
@@ -498,9 +542,7 @@ class ForcedPhot:
             else:
                 b = minor_axes.to(u.arcsec)
                 b[np.isnan(b)] = (self.BMIN).to(u.arcsec)
-        end = timer()
-        print(f"Minor axis handling: {end-start}")
-        start = timer()
+        
         if position_angles is None:
             pa = np.ones(len(X0)) * (self.BPA)
         else:
@@ -512,10 +554,7 @@ class ForcedPhot:
             else:
                 pa = position_angles
                 pa[np.isnan(pa)] = self.BPA
-        end = timer()
-        print(f"PA handling: {end-start}")
 
-        start = timer()
         # set up the postage stamps for the sources
         # goes from [xmin,xmax) and [ymin,ymax)
         # so add 1 to the maxes to be inclusive
@@ -527,86 +566,35 @@ class ForcedPhot:
         ymax = np.int16(np.round(Y0 + npix)) + 1
         xmin[xmin < 0] = 0
         ymin[ymin < 0] = 0
-        xmax[xmax > self.fi[0].shape[-1]] = self.fi[0].shape[-1]
-        ymax[ymax > self.fi[0].shape[-2]] = self.fi[0].shape[-2]
+        xmax[xmax > self.data.shape[-1]] = self.data.shape[-1]
+        ymax[ymax > self.data.shape[-2]] = self.data.shape[-2]
 
         flux = np.zeros(len(X0))
         flux_err = np.zeros(len(X0))
         chisq = np.zeros(len(X0))
         dof = np.zeros(len(X0), dtype=np.int16)
         iscluster = np.zeros(len(X0), dtype=np.int16)
-        end = timer()
-        print(f"Initial setup handling: {end-start}")
         
-        if use_numba:
-            #start = timer()
-            a_arcsec = a.to(u.arcsec).value
-            b_arcsec = b.to(u.arcsec).value
-            pa_deg = pa.to(u.deg).value
-            pixelscale_arcsec = self.pixelscale.to(u.arcsec).value
-            #end = timer()
-            #print(f"Time to do unit conversions: {end-start}")
-
-        start = timer()
+        
         for i in range(len(X0)):
             if use_clusters:
                 if i in self.in_cluster:
                     continue
-            if use_numba:
-                #start = timer()
-                sl = tuple((slice(ymin[i], ymax[i]), slice(xmin[i], xmax[i])))
-                #end = timer()
-                #print(f"Time to generate slice: {end-start}")
-                
-                """
-                start = timer()
-                x = np.arange(xmin[i], xmax[i])
-                y = np.arange(ymin[i], ymax[i])
-                xx, yy = np.meshgrid(x, y, copy=False)
-                end = timer()
-                print(f"Time to generate meshgrid: {end-start}")
-                
-                
-                start = timer()
-                xx_jit, yy_jit = meshgrid_jit(xmin[i], xmax[i], ymin[i], ymax[i])
-
-                end = timer()
-                print(f"Time to generate njit meshgrid: {end-start}")
-                print(xx.shape)
-                print(xx_jit.shape)
-                if not (xx==xx_jit).all():
-                    print("XX wrong")
-                    print(xx)
-                    print(xx_jit)
-                    
-                    print(xx[0])
-                    print(xx_jit[0])
-                    exit()
-                if not (yy==yy_jit).all():
-                    print("YY wrong")
-                    print(yy)
-                    print(yy_jit)
-                    exit()
-                """
-                xx, yy = meshgrid_jit(xmin[i], xmax[i], ymin[i], ymax[i])
-                #start = timer()
-                out = _measure_jit(
+            if self.use_numba:
+                #print(self.data.dtype.byteorder)
+                out = self._measure_jit(
                         X0[i],
                         Y0[i],
-                        sl,
-                        xx,
-                        yy,
-                        a_arcsec[i],
-                        b_arcsec[i],
-                        pa_deg[i],
-                        pixelscale_arcsec,
-                        self.noisedata,
-                        self.data,
-                        allow_nan=True,
-                        stamps=False
+                        xmin[i],
+                        xmax[i],
+                        ymin[i],
+                        ymax[i],
+                        a[i],
+                        b[i],
+                        pa[i],
+                        allow_nan,
+                        stamps
                     )
-                #end = timer()
-                #print(f"Time to run measure jit: {end-start}")
             else:
                 out = self._measure(
                     X0[i],
@@ -621,12 +609,7 @@ class ForcedPhot:
                     allow_nan=allow_nan,
                     stamps=stamps,
                 )
-            #start = timer()
             flux[i], flux_err[i], chisq[i], dof[i], *_ = out
-            #end = timer()
-            #print(f"Time to append result: {end-start}")
-        end = timer()
-        print(f"Time to compute all measurements: {end-start}s")
 
         if use_clusters:
             clusters = list(self.clusters.values())
@@ -754,8 +737,8 @@ class ForcedPhot:
         ymax = np.int16(np.round(Y0 + npix)) + 1
         xmin[xmin < 0] = 0
         ymin[ymin < 0] = 0
-        xmax[xmax > self.fi[0].shape[-1]] = self.fi[0].shape[-1]
-        ymax[ymax > self.fi[0].shape[-2]] = self.fi[0].shape[-2]
+        xmax[xmax > self.data.shape[-1]] = self.data.shape[-1]
+        ymax[ymax > self.data.shape[-2]] = self.data.shape[-2]
 
         for i in range(len(X0)):
             self._inject(
@@ -772,17 +755,16 @@ class ForcedPhot:
             )
 
     def _measure_jit(
+        self,
         X0,
         Y0,
-        sl,
-        xx,
-        yy,
-        a_arcsec,
-        b_arcsec,
-        pa_deg,
-        pixelscale_arcsec,
-        noisedata,
-        data,
+        xmin,
+        xmax,
+        ymin,
+        ymax,
+        a,
+        b,
+        pa,
         allow_nan=True,
         stamps=False
     ):
@@ -826,10 +808,12 @@ class ForcedPhot:
             if stamps=True
         :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`
         """
-        n = noisedata[sl]
-        d = data[sl]
+        sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
+        n = self.noisedata[sl]
+        d = self.data[sl]
+        contains_nan = np.any(np.isnan(n)) or np.any(np.isnan(d))
         
-        if np.any(np.isnan(n)):
+        if contains_nan:
             # protect against NaNs in the data or rms map
             good = np.isfinite(n) & np.isfinite(d)
             if (not allow_nan) or (good.sum() == 0):
@@ -842,10 +826,11 @@ class ForcedPhot:
                         np.nan,
                         0,
                         d,
-                        np.nan * xx,
+                        np.nan * d,
                     )
 
         d_orig = d
+        xx, yy = _meshgrid(xmin, xmax, ymin, ymax)
         ndata = np.size(xx)
         
         # unfortunately we have to make a custom kernel for each object
@@ -855,12 +840,12 @@ class ForcedPhot:
                             yy,
                             X0,
                             Y0,
-                            a_arcsec/pixelscale_arcsec,
-                            b_arcsec/pixelscale_arcsec,
-                            pa_deg
+                            (a/self.pixelscale).value,
+                            (b/self.pixelscale).value,
+                            pa.to(u.deg).value
                             )
 
-        if np.any(np.isnan(n)):
+        if contains_nan:
             # protect against NaNs in the data or rms map
             n = n[good]
             d = d[good]
@@ -880,6 +865,7 @@ class ForcedPhot:
                 d_orig,
                 flux * kernel,
             )
+
     def _measure(
         self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False
     ):
@@ -1213,7 +1199,7 @@ class ForcedPhot:
             return flux, flux_err, chisq, dof
 
     def _measure_astropy(
-        self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
+        self, fi, fb, fn, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, nbeam=3, stamps=False
     ):
         """
         flux, flux_err, chisq, DOF = _measure_astropy(
@@ -1237,32 +1223,15 @@ class ForcedPhot:
         JUST FOR DEBUGGING
         """
         p = astropy.wcs.utils.pixel_to_skycoord(X0, Y0, self.w)
-        if self.twod:
-            im = astropy.nddata.Cutout2D(self.fi[0].data, p, nbeam * a, wcs=self.w)
-            bg = self.fb[0].data[
-                im.ymin_original : im.ymax_original + 1,
-                im.xmin_original : im.xmax_original + 1,
-            ]
-            ns = self.fn[0].data[
-                im.ymin_original : im.ymax_original + 1,
-                im.xmin_original : im.xmax_original + 1,
-            ]
-        else:
-            im = astropy.nddata.Cutout2D(
-                self.fi[0].data[0, 0], p, nbeam * a, wcs=self.w
-            )
-            bg = self.fb[0].data[
-                0,
-                0,
-                im.ymin_original : im.ymax_original + 1,
-                im.xmin_original : im.xmax_original + 1,
-            ]
-            ns = self.fn[0].data[
-                0,
-                0,
-                im.ymin_original : im.ymax_original + 1,
-                im.xmin_original : im.xmax_original + 1,
-            ]
+        im = astropy.nddata.Cutout2D(fi[0].data, p, nbeam * a, wcs=self.w)
+        bg = fb[0].data[
+            im.ymin_original : im.ymax_original + 1,
+            im.xmin_original : im.xmax_original + 1,
+        ]
+        ns = fn[0].data[
+            im.ymin_original : im.ymax_original + 1,
+            im.xmin_original : im.xmax_original + 1,
+        ]
 
         x = np.arange(im.data.shape[1])
         y = np.arange(im.data.shape[0])
