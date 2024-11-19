@@ -51,15 +51,18 @@ from astropy.modeling import fitting, models
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
+import numba as nb
+from numba import float64, njit
+from numba.experimental import jitclass
 
 logger = logging.getLogger(__name__)
 
 pa_offset = 90 * u.deg
+pa_offset_deg = pa_offset.value
 
 
 class ArgumentError(Exception):
     pass
-
 
 class G2D:
     """2D Gaussian for use as a kernel.
@@ -120,6 +123,147 @@ class G2D:
         )
 
 
+specs = [
+    ('x0', float64),
+    ('y0', float64),
+    ('fwhm_x', float64),
+    ('fwhm_y', float64),
+    ('pa', float64),
+    ('sigma_x', float64),
+    ('sigma_y', float64),
+    ('a', float64),
+    ('b', float64),
+    ('c', float64),
+]
+
+@jitclass(specs)
+class G2DJit:
+    """2D Gaussian for use as a kernel.
+
+    Example usage:
+        create the kernel:
+        g = G2D(x0, y0, fwhm_x, fwhm_y, PA)
+        and return the kernel:
+        g(x, y)
+
+    Args:
+        x0 (float): the mean x coordinate (pixels)
+        y0 (float): the mean y coordinate (pixels)
+        fwhm_x (float): the FWHM in the x coordinate (pixels)
+        fwhm_y (float): the FWHM in the y coordinate (pixels)
+        pa (float): the position angle of the Gaussian (E of N) as a Quantity or in
+            radians.
+    """
+    def __init__(self, x0: float, y0: float, fwhm_x: float, fwhm_y: float, pa: float):
+        self.x0 = x0
+        self.y0 = y0
+        self.fwhm_x = fwhm_x
+        self.fwhm_y = fwhm_y
+        # adjust the PA to agree with the selavy convention
+        # E of N
+        self.pa = pa - pa_offset
+        self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
+        self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
+
+        self.a = (
+            np.cos(self.pa) ** 2 / 2 / self.sigma_x ** 2
+            + np.sin(self.pa) ** 2 / 2 / self.sigma_y ** 2
+        )
+        self.b = (
+            np.sin(2 * self.pa) / 2 / self.sigma_x ** 2
+            - np.sin(2 * self.pa) / 2 / self.sigma_y ** 2
+        )
+        self.c = (
+            np.sin(self.pa) ** 2 / 2 / self.sigma_x ** 2
+            + np.cos(self.pa) ** 2 / 2 / self.sigma_y ** 2
+        )
+
+    def evaluate(self, x: float, y: float) -> np.ndarray:
+        """Return the kernel evaluated at given pixel coordinates.
+
+        Args:
+            x (float): x coordinate for evaluation
+            y (float): y coordinate for evaluation
+
+        Returns:
+            np.ndarray: the kernel evaluated at the given coordinates
+        """
+        return np.exp(
+            -self.a * (x - self.x0) ** 2
+            - self.b * (x - self.x0) * (y - self.y0)
+            - self.c * (y - self.y0) ** 2
+        )
+
+specs = [
+    ('x', nb.float64[:]),
+    ('y', nb.float64[:]),
+    ('x0', float64),
+    ('y0', float64),
+    ('fwhm_x', float64),
+    ('fwhm_y', float64),
+    ('pa', float64),
+]
+
+
+specs = (nb.int64[:,:], nb.int64[:,:], float64, float64, float64, float64, float64)
+@njit(specs)
+def get_kernel(
+    x: np.ndarray, 
+    y: np.ndarray,
+    x0: float,
+    y0: float,
+    fwhm_x: float,
+    fwhm_y: float,
+    pa: float
+    ):
+    
+    pa = pa - pa_offset_deg
+    
+    sigma_x = fwhm_x / 2 / np.sqrt(2 * np.log(2))
+    sigma_y = fwhm_y / 2 / np.sqrt(2 * np.log(2))
+
+    a = (
+        np.cos(pa) ** 2 / 2 / sigma_x ** 2
+        + np.sin(pa) ** 2 / 2 / sigma_y ** 2
+    )
+    b = (
+        np.sin(2 * pa) / 2 / sigma_x ** 2
+        - np.sin(2 * pa) / 2 / sigma_y ** 2
+    )
+    c = (
+        np.sin(pa) ** 2 / 2 / sigma_x ** 2
+        + np.cos(pa) ** 2 / 2 / sigma_y ** 2
+    )
+
+    return np.exp(
+        -a * (x - x0) ** 2
+        - b * (x - x0) * (y - y0)
+        - c * (y - y0) ** 2
+    )
+
+
+@njit
+def _convolution(d, n, kernel):
+    flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
+    flux_err = ((n) * kernel / n ** 2).sum() / (kernel / n ** 2).sum()
+    chisq = (((d - kernel * flux) / n) ** 2).sum()
+    return flux, flux_err, chisq
+
+@njit
+def meshgrid_jit(xmin, xmax, ymin, ymax):
+    x = np.arange(xmin, xmax)
+    y = np.arange(ymin, ymax)
+    
+    xx = np.empty(shape=(y.size, x.size), dtype=x.dtype)
+    yy = np.empty_like(xx)
+    for i in range(x.size):
+        for j in range(y.size):
+            xx[j,i] = x[i]
+            yy[j,i] = y[j]
+    return xx, yy
+
+from timeit import default_timer as timer
+
 class ForcedPhot:
     """Create a ForcedPhotometry object for processing an ASKAPSoft image.
 
@@ -149,7 +293,8 @@ class ForcedPhot:
         verbose: bool = False,
     ):
         self.verbose = verbose
-
+        
+        start = timer()
         if isinstance(image, str):
             try:
                 self.fi = fits.open(image)
@@ -177,7 +322,9 @@ class ForcedPhot:
             self.fn = noise
         else:
             raise ArgumentError("Do not understand input noise image")
-
+        end = timer()
+        
+        print(f"Time to validate data: {end-start}s")
         if not (
             ("BMAJ" in self.fi[0].header.keys())
             and ("BMIN" in self.fi[0].header.keys())
@@ -186,16 +333,24 @@ class ForcedPhot:
 
             raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
 
+        start = timer()
         self.BMAJ = self.fi[0].header["BMAJ"] * u.deg
         self.BMIN = self.fi[0].header["BMIN"] * u.deg
         self.BPA = self.fi[0].header["BPA"] * u.deg
 
         self.NAXIS1 = self.fi[0].header["NAXIS1"]
         self.NAXIS2 = self.fi[0].header["NAXIS2"]
+        end = timer()
+        
+        print(f"Time to initialise header info: {end-start}s")
 
+        start1 = timer()
         self.data = (self.fi[0].data - self.fb[0].data).squeeze()
         self.bgdata = self.fb[0].data.squeeze()
         self.noisedata = self.fn[0].data.squeeze()
+        end1 = timer()
+        print(f"Time to squeeze: {end1-start1}s")
+        
         # do this so that 0-regions in the background
         # or noise maps are set to NaN, and then
         # will be handled through other means
@@ -263,7 +418,9 @@ class ForcedPhot:
         cluster_threshold: Optional[float] = 1.5,
         allow_nan: bool = True,
         stamps: bool = False,
-        edge_buffer: float = 1.0
+        edge_buffer: float = 1.0,
+        use_numba: bool = False,
+        use_clusters: bool = True,
     ) -> Union[Tuple[Any, Any, Any, Any, Any], Tuple[Any, Any, Any, Any, Any, Any, Any]]:
         """Perform the forced photometry returning the flux density and uncertainty.
         Example usage:
@@ -299,11 +456,15 @@ class ForcedPhot:
             A tuple containing the flux, flux error, chi-squared value, degrees of
             freedom, cluster ID. If `stamps` is True, the data and model are also returned.
         """
+        start = timer()
         X0, Y0 = map(
             np.atleast_1d, astropy.wcs.utils.skycoord_to_pixel(positions, self.w)
         )
         X0, Y0 = self._filter_out_of_range(X0, Y0, nbeam, edge_buffer)
-        self.cluster(X0, Y0, threshold=cluster_threshold)
+        if use_clusters:
+            self.cluster(X0, Y0, threshold=cluster_threshold)
+        end = timer()
+        print(f"Initial filtering: {end-start}")
 
         if stamps:
             if len(X0) > 1 and not (
@@ -311,6 +472,7 @@ class ForcedPhot:
             ):
                 raise ArgumentError("Cannot output postage stamps for >1 object")
 
+        start = timer()
         if major_axes is None:
             a = np.ones(len(X0)) * (self.BMAJ).to(u.arcsec)
         else:
@@ -322,6 +484,9 @@ class ForcedPhot:
             else:
                 a = major_axes.to(u.arcsec)
                 a[np.isnan(a)] = (self.BMAJ).to(u.arcsec)
+        end = timer()
+        print(f"Major axis handling: {end-start}")
+        start = timer()
         if minor_axes is None:
             b = np.ones(len(X0)) * (self.BMIN).to(u.arcsec)
         else:
@@ -333,6 +498,9 @@ class ForcedPhot:
             else:
                 b = minor_axes.to(u.arcsec)
                 b[np.isnan(b)] = (self.BMIN).to(u.arcsec)
+        end = timer()
+        print(f"Minor axis handling: {end-start}")
+        start = timer()
         if position_angles is None:
             pa = np.ones(len(X0)) * (self.BPA)
         else:
@@ -344,7 +512,10 @@ class ForcedPhot:
             else:
                 pa = position_angles
                 pa[np.isnan(pa)] = self.BPA
+        end = timer()
+        print(f"PA handling: {end-start}")
 
+        start = timer()
         # set up the postage stamps for the sources
         # goes from [xmin,xmax) and [ymin,ymax)
         # so add 1 to the maxes to be inclusive
@@ -364,56 +535,130 @@ class ForcedPhot:
         chisq = np.zeros(len(X0))
         dof = np.zeros(len(X0), dtype=np.int16)
         iscluster = np.zeros(len(X0), dtype=np.int16)
+        end = timer()
+        print(f"Initial setup handling: {end-start}")
+        
+        if use_numba:
+            #start = timer()
+            a_arcsec = a.to(u.arcsec).value
+            b_arcsec = b.to(u.arcsec).value
+            pa_deg = pa.to(u.deg).value
+            pixelscale_arcsec = self.pixelscale.to(u.arcsec).value
+            #end = timer()
+            #print(f"Time to do unit conversions: {end-start}")
 
+        start = timer()
         for i in range(len(X0)):
-            if i in self.in_cluster:
-                continue
-            out = self._measure(
-                X0[i],
-                Y0[i],
-                xmin[i],
-                xmax[i],
-                ymin[i],
-                ymax[i],
-                a[i],
-                b[i],
-                pa[i],
-                allow_nan=allow_nan,
-                stamps=stamps,
-            )
+            if use_clusters:
+                if i in self.in_cluster:
+                    continue
+            if use_numba:
+                #start = timer()
+                sl = tuple((slice(ymin[i], ymax[i]), slice(xmin[i], xmax[i])))
+                #end = timer()
+                #print(f"Time to generate slice: {end-start}")
+                
+                """
+                start = timer()
+                x = np.arange(xmin[i], xmax[i])
+                y = np.arange(ymin[i], ymax[i])
+                xx, yy = np.meshgrid(x, y, copy=False)
+                end = timer()
+                print(f"Time to generate meshgrid: {end-start}")
+                
+                
+                start = timer()
+                xx_jit, yy_jit = meshgrid_jit(xmin[i], xmax[i], ymin[i], ymax[i])
 
+                end = timer()
+                print(f"Time to generate njit meshgrid: {end-start}")
+                print(xx.shape)
+                print(xx_jit.shape)
+                if not (xx==xx_jit).all():
+                    print("XX wrong")
+                    print(xx)
+                    print(xx_jit)
+                    
+                    print(xx[0])
+                    print(xx_jit[0])
+                    exit()
+                if not (yy==yy_jit).all():
+                    print("YY wrong")
+                    print(yy)
+                    print(yy_jit)
+                    exit()
+                """
+                xx, yy = meshgrid_jit(xmin[i], xmax[i], ymin[i], ymax[i])
+                #start = timer()
+                out = _measure_jit(
+                        X0[i],
+                        Y0[i],
+                        sl,
+                        xx,
+                        yy,
+                        a_arcsec[i],
+                        b_arcsec[i],
+                        pa_deg[i],
+                        pixelscale_arcsec,
+                        self.noisedata,
+                        self.data,
+                        allow_nan=True,
+                        stamps=False
+                    )
+                #end = timer()
+                #print(f"Time to run measure jit: {end-start}")
+            else:
+                out = self._measure(
+                    X0[i],
+                    Y0[i],
+                    xmin[i],
+                    xmax[i],
+                    ymin[i],
+                    ymax[i],
+                    a[i],
+                    b[i],
+                    pa[i],
+                    allow_nan=allow_nan,
+                    stamps=stamps,
+                )
+            #start = timer()
             flux[i], flux_err[i], chisq[i], dof[i], *_ = out
+            #end = timer()
+            #print(f"Time to append result: {end-start}")
+        end = timer()
+        print(f"Time to compute all measurements: {end-start}s")
 
-        clusters = list(self.clusters.values())
-        for j in range(len(clusters)):
-            ii = np.array(list(clusters[j]))
-            if self.verbose:
-                print("Fitting a cluster of sources %s" % ii)
-            xmin = max(int(round((X0[ii] - npix[ii]).min())), 0)
-            xmax = min(int(round((X0[ii] + npix[ii]).max())), self.data.shape[-1]) + 1
-            ymin = max(int(round((Y0[ii] - npix[ii]).min())), 0)
-            ymax = min(int(round((Y0[ii] + npix[ii]).max())), self.data.shape[-2]) + 1
+        if use_clusters:
+            clusters = list(self.clusters.values())
+            for j in range(len(clusters)):
+                ii = np.array(list(clusters[j]))
+                if self.verbose:
+                    print("Fitting a cluster of sources %s" % ii)
+                xmin = max(int(round((X0[ii] - npix[ii]).min())), 0)
+                xmax = min(int(round((X0[ii] + npix[ii]).max())), self.data.shape[-1]) + 1
+                ymin = max(int(round((Y0[ii] - npix[ii]).min())), 0)
+                ymax = min(int(round((Y0[ii] + npix[ii]).max())), self.data.shape[-2]) + 1
 
-            out = self._measure_cluster(
-                X0[ii],
-                Y0[ii],
-                xmin,
-                xmax,
-                ymin,
-                ymax,
-                a[ii],
-                b[ii],
-                pa[ii],
-                allow_nan=allow_nan,
-                stamps=stamps,
-            )
-            f, f_err, csq, _dof = out[:4]
-            for k in range(len(ii)):
-                flux[ii[k]] = f[k]
-                flux_err[ii[k]] = f_err[k]
-                chisq[ii[k]] = csq[k]
-                dof[ii[k]] = _dof[k]
-                iscluster[ii[k]] = j + 1
+                out = self._measure_cluster(
+                    X0[ii],
+                    Y0[ii],
+                    xmin,
+                    xmax,
+                    ymin,
+                    ymax,
+                    a[ii],
+                    b[ii],
+                    pa[ii],
+                    allow_nan=allow_nan,
+                    stamps=stamps,
+                )
+                f, f_err, csq, _dof = out[:4]
+                for k in range(len(ii)):
+                    flux[ii[k]] = f[k]
+                    flux_err[ii[k]] = f_err[k]
+                    chisq[ii[k]] = csq[k]
+                    dof[ii[k]] = _dof[k]
+                    iscluster[ii[k]] = j + 1
 
         if positions.isscalar:
             if stamps:
@@ -526,6 +771,115 @@ class ForcedPhot:
                 pa[i],
             )
 
+    def _measure_jit(
+        X0,
+        Y0,
+        sl,
+        xx,
+        yy,
+        a_arcsec,
+        b_arcsec,
+        pa_deg,
+        pixelscale_arcsec,
+        noisedata,
+        data,
+        allow_nan=True,
+        stamps=False
+    ):
+        """
+        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
+
+        or
+
+        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
+            pa, allow_nan=True, stamps=False)
+
+        forced photometry for a single source
+        if stamps is True, will also output data and kernel postage stamps
+
+        :param X0: x coordinate of source to measure
+        :type X0: float
+        :param Y0: y coordinate of source to measure
+        :type Y0: float
+        :param xmin: min x coordinate of postage stamp for measuring
+        :type xmin: int
+        :param xmax: max x coordinate of postage stamp for measuring
+        :type xmax: int
+        :param ymin: min y coordinate of postage stamp for measuring
+        :type ymin: int
+        :param ymax: max y coordinate of postage stamp for measuring
+        :type ymax: int
+        :param a: fwhm along major axis in angular units
+        :type a: `astropy.units.Quantity`
+        :param b: fwhm along minor axis in angular units
+        :type b: `astropy.units.Quantity`
+        :param pa: position angle in angular units
+        :type pa: `astropy.units.Quantity`
+        :param allow_nan: whether or not to try to measure sources even if some RMS values
+            are NaN.  Defaults to True
+        :type allow_nan: bool, optional
+        :param stamps: whether or not to return postage stamps of the data and model for
+            a single source, defaults to False
+        :type stamps: bool, optional
+
+        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
+            if stamps=True
+        :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`
+        """
+        n = noisedata[sl]
+        d = data[sl]
+        
+        if np.any(np.isnan(n)):
+            # protect against NaNs in the data or rms map
+            good = np.isfinite(n) & np.isfinite(d)
+            if (not allow_nan) or (good.sum() == 0):
+                if not stamps:
+                    return np.nan, np.nan, np.nan, 0
+                else:
+                    return (
+                        np.nan,
+                        np.nan,
+                        np.nan,
+                        0,
+                        d,
+                        np.nan * xx,
+                    )
+
+        d_orig = d
+        ndata = np.size(xx)
+        
+        # unfortunately we have to make a custom kernel for each object
+        # since the fractional-pixel offsets change for each
+        
+        kernel = get_kernel(xx,
+                            yy,
+                            X0,
+                            Y0,
+                            a_arcsec/pixelscale_arcsec,
+                            b_arcsec/pixelscale_arcsec,
+                            pa_deg
+                            )
+
+        if np.any(np.isnan(n)):
+            # protect against NaNs in the data or rms map
+            n = n[good]
+            d = d[good]
+            kernel = kernel[good]
+            ndata = good.sum()
+
+        flux, flux_err, chisq = _convolution(d, n, kernel)
+
+        if not stamps:
+            return flux, flux_err, chisq, ndata - 1
+        else:
+            return (
+                flux,
+                flux_err,
+                chisq,
+                ndata - 1,
+                d_orig,
+                flux * kernel,
+            )
     def _measure(
         self, X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False
     ):
