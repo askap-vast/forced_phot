@@ -366,21 +366,22 @@ class ForcedPhot:
         end = timer()
         
         print(f"Time to validate data: {end-start}s")
+        img_header = fi[0].header
         if not (
-            ("BMAJ" in fi[0].header.keys())
-            and ("BMIN" in fi[0].header.keys())
-            and ("BPA" in fi[0].header.keys())
+            ("BMAJ" in img_header.keys())
+            and ("BMIN" in img_header.keys())
+            and ("BPA" in img_header.keys())
         ):
 
             raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
 
         start = timer()
-        self.BMAJ = fi[0].header["BMAJ"] * u.deg
-        self.BMIN = fi[0].header["BMIN"] * u.deg
-        self.BPA = fi[0].header["BPA"] * u.deg
+        self.BMAJ = img_header["BMAJ"] * u.deg
+        self.BMIN = img_header["BMIN"] * u.deg
+        self.BPA = img_header["BPA"] * u.deg
 
-        self.NAXIS1 = fi[0].header["NAXIS1"]
-        self.NAXIS2 = fi[0].header["NAXIS2"]
+        self.NAXIS1 = img_header["NAXIS1"]
+        self.NAXIS2 = img_header["NAXIS2"]
         end = timer()
         
         print(f"Time to initialise header info: {end-start}s")
@@ -403,7 +404,7 @@ class ForcedPhot:
         end = timer()
         print(f"Time to byte reorder: {end-start}s")
 
-        self.w = WCS(fi[0].header, naxis=2).celestial
+        self.w = WCS(img_header, naxis=2).celestial
         self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
 
     def _byte_reorder(self, arr):
