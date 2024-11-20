@@ -141,6 +141,15 @@ def get_kernel(
     fwhm_y: float,
     pa: float
     ):
+    """Calculate 2D Gaussian kernel, optimised with numba
+
+    Args:
+        x0 (float): the mean x coordinate (pixels)
+        y0 (float): the mean y coordinate (pixels)
+        fwhm_x (float): the FWHM in the x coordinate (pixels)
+        fwhm_y (float): the FWHM in the y coordinate (pixels)
+        pa (float): the position angle of the Gaussian (E of N) in deg
+    """
     
     pa = pa - pa_offset_deg
     
@@ -169,6 +178,17 @@ def get_kernel(
 
 @njit
 def _convolution(d, n, kernel):
+    """
+    Calculate the convolution of the data and noise with the kernel using numba.
+    
+    Args:
+        d: numpy array containing the background-subtracted data
+        n: numpy array containing the noise map
+        k: numpy array containing the kernel
+    
+    Returns:
+        Flux, error and chi-squared
+    """
     flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
     flux_err = ((n) * kernel / n ** 2).sum() / (kernel / n ** 2).sum()
     chisq = (((d - kernel * flux) / n) ** 2).sum()
@@ -176,6 +196,12 @@ def _convolution(d, n, kernel):
 
 @njit
 def _meshgrid(xmin, xmax, ymin, ymax):
+    """
+    Generate a 2x2 meshgrid as required.
+    
+    With numba, this specific code is faster than the generalised np.meshgrid
+    """
+    
     x = np.arange(xmin, xmax)
     y = np.arange(ymin, ymax)
     
