@@ -404,6 +404,7 @@ class ForcedPhot:
         end = timer()
         print(f"Time to byte reorder: {end-start}s")
 
+        print(f"data mem usage: {self.data.nbytes/1024**2}")
         self.w = WCS(img_header, naxis=2).celestial
         self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
 
