@@ -490,7 +490,7 @@ class ForcedPhot:
                 if i in self.in_cluster:
                     continue
             if self.use_numba:
-                out = self._measure_jit(
+                out = self._numba_measure(
                         X0[i],
                         Y0[i],
                         xmin[i],
@@ -662,7 +662,7 @@ class ForcedPhot:
                 pa[i],
             )
 
-    def _measure_jit(
+    def _numba_measure(
         self,
         X0,
         Y0,
@@ -677,11 +677,11 @@ class ForcedPhot:
         stamps=False
     ):
         """
-        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
+        flux,flux_err,chisq,DOF=_numba_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
 
         or
 
-        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
+        flux,flux_err,chisq,DOF,data,model=_numba_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
             pa, allow_nan=True, stamps=False)
 
         forced photometry for a single source
