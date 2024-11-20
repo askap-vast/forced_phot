@@ -201,6 +201,7 @@ class ForcedPhot:
         background (Union[str, fits.HDUList]): name of the background image or FITS handle.
         noise (Union[str, fits.HDUList]): name of the noise map image or FITS handle.
         verbose (bool, optional): whether to be verbose in output. Defaults to False.
+        use_numba (bool, optional): whether to use numba, which may be slower for a single fit. Default to False.
 
     Raises:
         ArgumentError: an input type is not a supported.
@@ -213,8 +214,8 @@ class ForcedPhot:
         image: Union[str, fits.HDUList],
         background: Union[str, fits.HDUList],
         noise: Union[str, fits.HDUList],
-        verbose: bool = False,
-        use_numba: bool = False,
+        verbose: Optional[bool] = False,
+        use_numba: Optional[bool] = False,
     ):
         self.verbose = verbose
         self.use_numba = use_numba
@@ -279,6 +280,14 @@ class ForcedPhot:
         self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
 
     def _byte_reorder(self, arr):
+        """Convert an array to use native byte ordering as required by numba
+        
+        Args:
+            arr (np.ndarray): the array
+            
+        Returns:
+            The array, with reordering
+        """
         if arr.dtype.byteorder != '=':
             logger.warning("Numba requires native byte ordering. Converting.")
             arr = arr.astype(arr.dtype.newbyteorder('='))
@@ -369,6 +378,8 @@ class ForcedPhot:
                 be NaN.  Defaults to True.
             stamps: whether or not to also return a postage stamp. Can only be used on a
                 single source. Defaults to False.
+            use_clusters: Whether to use clustering, or fit each source individually.
+                Defaults to True.
 
         Raises:
             ArgumentError: stamps were requested for more than one object.
@@ -684,8 +695,8 @@ class ForcedPhot:
         d = self.data[sl]
         contains_nan = np.any(np.isnan(n)) or np.any(np.isnan(d))
         
+        # Handle NaN-sources immediately rather than wasting time computing the kernel
         if contains_nan:
-            # protect against NaNs in the data or rms map
             good = np.isfinite(n) & np.isfinite(d)
             if (not allow_nan) or (good.sum() == 0):
                 if not stamps:
@@ -704,9 +715,6 @@ class ForcedPhot:
         xx, yy = _meshgrid(xmin, xmax, ymin, ymax)
         ndata = np.size(xx)
         
-        # unfortunately we have to make a custom kernel for each object
-        # since the fractional-pixel offsets change for each
-        
         kernel = get_kernel(xx,
                             yy,
                             X0,
@@ -716,8 +724,8 @@ class ForcedPhot:
                             pa.to(u.deg).value
                             )
 
+        # Now revisit NaN-sources as required
         if contains_nan:
-            # protect against NaNs in the data or rms map
             n = n[good]
             d = d[good]
             kernel = kernel[good]
