@@ -187,122 +187,6 @@ def _meshgrid(xmin, xmax, ymin, ymax):
             yy[j,i] = y[j]
     return xx, yy
 
-def _measure_jit(
-        data,
-        noisedata,
-        pixelscale,
-        X0,
-        Y0,
-        xmin,
-        xmax,
-        ymin,
-        ymax,
-        a,
-        b,
-        pa,
-        allow_nan=True,
-        stamps=False
-    ):
-        """
-        flux,flux_err,chisq,DOF=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b, pa, allow_nan=True, stamps=False)
-
-        or
-
-        flux,flux_err,chisq,DOF,data,model=_measure(X0, Y0, xmin, xmax, ymin, ymax, a, b,
-            pa, allow_nan=True, stamps=False)
-
-        forced photometry for a single source
-        if stamps is True, will also output data and kernel postage stamps
-
-        :param X0: x coordinate of source to measure
-        :type X0: float
-        :param Y0: y coordinate of source to measure
-        :type Y0: float
-        :param xmin: min x coordinate of postage stamp for measuring
-        :type xmin: int
-        :param xmax: max x coordinate of postage stamp for measuring
-        :type xmax: int
-        :param ymin: min y coordinate of postage stamp for measuring
-        :type ymin: int
-        :param ymax: max y coordinate of postage stamp for measuring
-        :type ymax: int
-        :param a: fwhm along major axis in angular units
-        :type a: `astropy.units.Quantity`
-        :param b: fwhm along minor axis in angular units
-        :type b: `astropy.units.Quantity`
-        :param pa: position angle in angular units
-        :type pa: `astropy.units.Quantity`
-        :param allow_nan: whether or not to try to measure sources even if some RMS values
-            are NaN.  Defaults to True
-        :type allow_nan: bool, optional
-        :param stamps: whether or not to return postage stamps of the data and model for
-            a single source, defaults to False
-        :type stamps: bool, optional
-
-        :returns: flux, flux_err, chisq, DOF  or  flux, flux_err, chisq, DOF, data, model
-            if stamps=True
-        :rtype: float, float, float, float, optionally `np.ndarray`,`np.ndarray`
-        """
-        sl = tuple((slice(ymin, ymax), slice(xmin, xmax)))
-        n = noisedata[sl]
-        d = data[sl]
-        contains_nan = np.any(np.isnan(n)) or np.any(np.isnan(d))
-        
-        if contains_nan:
-            # protect against NaNs in the data or rms map
-            good = np.isfinite(n) & np.isfinite(d)
-            if (not allow_nan) or (good.sum() == 0):
-                if not stamps:
-                    return np.nan, np.nan, np.nan, 0
-                else:
-                    return (
-                        np.nan,
-                        np.nan,
-                        np.nan,
-                        0,
-                        d,
-                        np.nan * d,
-                    )
-
-        d_orig = d
-        xx, yy = _meshgrid(xmin, xmax, ymin, ymax)
-        ndata = np.size(xx)
-        
-        # unfortunately we have to make a custom kernel for each object
-        # since the fractional-pixel offsets change for each
-        
-        kernel = get_kernel(xx,
-                            yy,
-                            X0,
-                            Y0,
-                            (a/pixelscale).value,
-                            (b/pixelscale).value,
-                            pa.to(u.deg).value
-                            )
-
-        if contains_nan:
-            # protect against NaNs in the data or rms map
-            n = n[good]
-            d = d[good]
-            kernel = kernel[good]
-            ndata = good.sum()
-
-        flux, flux_err, chisq = _convolution(d, n, kernel)
-
-        if not stamps:
-            return flux, flux_err, chisq, ndata - 1
-        else:
-            return (
-                flux,
-                flux_err,
-                chisq,
-                ndata - 1,
-                d_orig,
-                flux * kernel,
-            )
-
-from timeit import default_timer as timer
-
 class ForcedPhot:
     """Create a ForcedPhotometry object for processing an ASKAPSoft image.
 
@@ -335,7 +219,6 @@ class ForcedPhot:
         self.verbose = verbose
         self.use_numba = use_numba
         
-        start = timer()
         if isinstance(image, str):
             try:
                 fi = fits.open(image)
@@ -363,9 +246,7 @@ class ForcedPhot:
             fn = noise
         else:
             raise ArgumentError("Do not understand input noise image")
-        end = timer()
         
-        print(f"Time to validate data: {end-start}s")
         img_header = fi[0].header
         if not (
             ("BMAJ" in img_header.keys())
@@ -375,36 +256,25 @@ class ForcedPhot:
 
             raise KeyError("Image header does not have BMAJ, BMIN, BPA keywords")
 
-        start = timer()
         self.BMAJ = img_header["BMAJ"] * u.deg
         self.BMIN = img_header["BMIN"] * u.deg
         self.BPA = img_header["BPA"] * u.deg
 
         self.NAXIS1 = img_header["NAXIS1"]
         self.NAXIS2 = img_header["NAXIS2"]
-        end = timer()
         
-        print(f"Time to initialise header info: {end-start}s")
-        
-        start = timer()
         self.data = (fi[0].data-fb[0].data).squeeze()
         self.noisedata = fn[0].data.squeeze()
-        end = timer()
-        print(f"Time to squeeze (default): {end-start}s")
         
         # do this so that 0-regions in the background
         # or noise maps are set to NaN, and then
         # will be handled through other means
         self.noisedata[self.noisedata == 0] = np.nan
         
-        start = timer()
         if self.use_numba:
             self.data = self._byte_reorder(self.data)
             self.noisedata = self._byte_reorder(self.noisedata)
-        end = timer()
-        print(f"Time to byte reorder: {end-start}s")
 
-        print(f"data mem usage: {self.data.nbytes/1024**2}")
         self.w = WCS(img_header, naxis=2).celestial
         self.pixelscale = (proj_plane_pixel_scales(self.w)[1] * u.deg).to(u.arcsec)
 
@@ -583,7 +453,6 @@ class ForcedPhot:
                 if i in self.in_cluster:
                     continue
             if self.use_numba:
-                #print(self.data.dtype.byteorder)
                 out = self._measure_jit(
                         X0[i],
                         Y0[i],
@@ -618,7 +487,7 @@ class ForcedPhot:
             for j in range(len(clusters)):
                 ii = np.array(list(clusters[j]))
                 if self.verbose:
-                    print("Fitting a cluster of sources %s" % ii)
+                    logger.info("Fitting a cluster of sources %s" % ii)
                 xmin = max(int(round((X0[ii] - npix[ii]).min())), 0)
                 xmax = min(int(round((X0[ii] + npix[ii]).max())), self.data.shape[-1]) + 1
                 ymin = max(int(round((Y0[ii] - npix[ii]).min())), 0)
