@@ -136,45 +136,6 @@ specs = (
     float64,
     float64
 )
-
-
-
-def get_kernel_new(
-    x: np.ndarray, 
-    y: np.ndarray,
-    x0: float,
-    y0: float,
-    fwhm_x: float,
-    fwhm_y: float,
-    pa: float
-    ):
-    
-    pa = pa - pa_offset_deg
-    
-    self.x0 = x0
-    self.y0 = y0
-    self.fwhm_x = fwhm_x
-    self.fwhm_y = fwhm_y
-    # adjust the PA to agree with the selavy convention
-    # E of N
-    self.pa = pa - pa_offset
-    self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
-    self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
-
-    self.a = (
-        np.cos(self.pa) ** 2 / 2 / self.sigma_x ** 2
-        + np.sin(self.pa) ** 2 / 2 / self.sigma_y ** 2
-    )
-    self.b = (
-        np.sin(2 * self.pa) / 2 / self.sigma_x ** 2
-        - np.sin(2 * self.pa) / 2 / self.sigma_y ** 2
-    )
-    self.c = (
-        np.sin(self.pa) ** 2 / 2 / self.sigma_x ** 2
-        + np.cos(self.pa) ** 2 / 2 / self.sigma_y ** 2
-    )
-    
-
 @njit(specs)
 def get_kernel(
     x: np.ndarray, 
