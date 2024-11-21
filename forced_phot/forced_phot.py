@@ -136,6 +136,45 @@ specs = (
     float64,
     float64
 )
+
+
+
+def get_kernel_new(
+    x: np.ndarray, 
+    y: np.ndarray,
+    x0: float,
+    y0: float,
+    fwhm_x: float,
+    fwhm_y: float,
+    pa: float
+    ):
+    
+    pa = pa - pa_offset_deg
+    
+    self.x0 = x0
+    self.y0 = y0
+    self.fwhm_x = fwhm_x
+    self.fwhm_y = fwhm_y
+    # adjust the PA to agree with the selavy convention
+    # E of N
+    self.pa = pa - pa_offset
+    self.sigma_x = self.fwhm_x / 2 / np.sqrt(2 * np.log(2))
+    self.sigma_y = self.fwhm_y / 2 / np.sqrt(2 * np.log(2))
+
+    self.a = (
+        np.cos(self.pa) ** 2 / 2 / self.sigma_x ** 2
+        + np.sin(self.pa) ** 2 / 2 / self.sigma_y ** 2
+    )
+    self.b = (
+        np.sin(2 * self.pa) / 2 / self.sigma_x ** 2
+        - np.sin(2 * self.pa) / 2 / self.sigma_y ** 2
+    )
+    self.c = (
+        np.sin(self.pa) ** 2 / 2 / self.sigma_x ** 2
+        + np.cos(self.pa) ** 2 / 2 / self.sigma_y ** 2
+    )
+    
+
 @njit(specs)
 def get_kernel(
     x: np.ndarray, 
@@ -156,16 +195,16 @@ def get_kernel(
         pa (float): the position angle of the Gaussian (E of N) in deg
     """
     
-    pa = pa - pa_offset_deg
+    pa = np.deg2rad(pa - pa_offset_deg)
     
-    sigma_fac = np.sqrt(2 * np.log(2)) / 2
+    sigma_fac = 0.5/np.sqrt(2 * np.log(2))
     
     
     sigma_x = fwhm_x * sigma_fac
     sigma_y = fwhm_y * sigma_fac
     
-    sigma_x_fac = sigma_x ** 2 / 2
-    sigma_y_fac = sigma_y ** 2 / 2
+    sigma_x_fac = 0.5 / sigma_x ** 2
+    sigma_y_fac = 0.5 /sigma_y ** 2
 
     a = (
         np.cos(pa) ** 2 * sigma_x_fac
@@ -188,7 +227,6 @@ def get_kernel(
         - b * (xdiff) * (ydiff)
         - c * (ydiff) ** 2
     )
-
 
 @njit
 def _convolution(d, n, kernel):
@@ -841,6 +879,14 @@ class ForcedPhot:
         g = G2D(X0, Y0, (a / self.pixelscale).value, (b / self.pixelscale).value, pa)
 
         kernel = g(xx, yy)
+        
+        #print(xmin, xmax, ymin, ymax)
+        #print(X0,Y0)
+        #print((a / self.pixelscale).value, (b / self.pixelscale).value, pa)
+        
+        #xx, yy = _meshgrid(xmin, xmax, ymin, ymax)
+        
+        #kernel = get_kernel(xx, yy, X0, Y0, (a / self.pixelscale).value,(b / self.pixelscale).value, pa.to(u.deg).value)
 
         # uncertainties: see discussion in Section 3 of Condon (1997)
         # the uncertainty on the amplitude is just the noise at the position of the source
