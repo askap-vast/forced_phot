@@ -13,5 +13,6 @@ setup(
         "scipy",
         "astropy",
         "pandas",
+        "numba"
     ],
 )
