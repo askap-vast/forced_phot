@@ -55,7 +55,12 @@ import numba as nb
 from numba import float64, njit
 from numba.experimental import jitclass
 
+from timeit import default_timer as timer
+
 logger = logging.getLogger(__name__)
+
+numba_logger = logging.getLogger('numba')
+numba_logger.setLevel(logging.WARNING)
 
 pa_offset = 90 * u.deg
 pa_offset_deg = pa_offset.value
@@ -153,26 +158,35 @@ def get_kernel(
     
     pa = pa - pa_offset_deg
     
-    sigma_x = fwhm_x / 2 / np.sqrt(2 * np.log(2))
-    sigma_y = fwhm_y / 2 / np.sqrt(2 * np.log(2))
+    sigma_fac = np.sqrt(2 * np.log(2)) / 2
+    
+    
+    sigma_x = fwhm_x * sigma_fac
+    sigma_y = fwhm_y * sigma_fac
+    
+    sigma_x_fac = sigma_x ** 2 / 2
+    sigma_y_fac = sigma_y ** 2 / 2
 
     a = (
-        np.cos(pa) ** 2 / 2 / sigma_x ** 2
-        + np.sin(pa) ** 2 / 2 / sigma_y ** 2
+        np.cos(pa) ** 2 * sigma_x_fac
+        + np.sin(pa) ** 2 * sigma_y_fac 
     )
     b = (
-        np.sin(2 * pa) / 2 / sigma_x ** 2
-        - np.sin(2 * pa) / 2 / sigma_y ** 2
+        np.sin(2 * pa) * sigma_x_fac
+        - np.sin(2 * pa) * sigma_y_fac 
     )
     c = (
-        np.sin(pa) ** 2 / 2 / sigma_x ** 2
-        + np.cos(pa) ** 2 / 2 / sigma_y ** 2
+        np.sin(pa) ** 2 * sigma_x_fac
+        + np.cos(pa) ** 2 * sigma_y_fac 
     )
+    
+    xdiff = x-x0
+    ydiff = y-y0
 
     return np.exp(
-        -a * (x - x0) ** 2
-        - b * (x - x0) * (y - y0)
-        - c * (y - y0) ** 2
+        -a * (xdiff) ** 2
+        - b * (xdiff) * (ydiff)
+        - c * (ydiff) ** 2
     )
 
 
@@ -189,9 +203,13 @@ def _convolution(d, n, kernel):
     Returns:
         Flux, error and chi-squared
     """
-    flux = ((d) * kernel / n ** 2).sum() / (kernel ** 2 / n ** 2).sum()
-    flux_err = ((n) * kernel / n ** 2).sum() / (kernel / n ** 2).sum()
+    
+    kernel_n2 = kernel / n ** 2
+
+    flux = ((d) * kernel_n2).sum() / (kernel ** 2 / n ** 2).sum()
+    flux_err = ((n) * kernel_n2).sum() / (kernel_n2).sum()
     chisq = (((d - kernel * flux) / n) ** 2).sum()
+
     return flux, flux_err, chisq
 
 @njit
